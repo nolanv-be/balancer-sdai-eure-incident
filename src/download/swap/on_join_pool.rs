@@ -1,10 +1,7 @@
-use crate::download::block_timestamp::TryIntoBlockTimestamp;
-use crate::download::swap::{
-    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
-};
-use crate::helper::{Position, StateBySubPath, fetch_sub_vm_trace};
-use alloy::primitives::{B256, TxHash, U256, keccak256};
-use alloy::rpc::types::trace::parity::{CallAction, LocalizedTransactionTrace};
+use crate::download::swap::{EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, compute_sdai_eure_from_bpt};
+use crate::helper::{Position, StateBySubPath};
+use alloy::primitives::{B256, U256, keccak256};
+use alloy::rpc::types::trace::parity::{CallAction, TraceOutput};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use eyre::{Context, OptionExt, Result, eyre};
@@ -33,79 +30,46 @@ impl TryFrom<&[u8]> for JoinKind {
         }
     }
 }
+pub fn decode_in_out_on_join_pool(
+    call_action: &CallAction,
+    trace_output: &TraceOutput,
+) -> Result<Option<(onJoinPoolCall, onJoinPoolReturn)>> {
+    let Ok(join_pool_in) = onJoinPoolCall::abi_decode(&call_action.input) else {
+        return Ok(None);
+    };
+    let Ok(join_pool_out) = onJoinPoolCall::abi_decode_returns(trace_output.output()) else {
+        return Ok(None);
+    };
+    Ok(Some((join_pool_in, join_pool_out)))
+}
+pub fn process_on_join_pool_trace(
+    state_by_sub_path: &StateBySubPath,
+    sub_trace_address: &[usize],
+    join_pool_in: onJoinPoolCall,
+    join_pool_out: onJoinPoolReturn,
+) -> Result<Option<Swap>> {
+    let join_kind: JoinKind = join_pool_in
+        .userData
+        .get(0..32)
+        .ok_or_eyre("JoinKind not found in userData")?
+        .try_into()?;
+    if matches!(join_kind, JoinKind::Init) {
+        info!("Skip the join init pool.");
+        return Ok(None);
+    }
 
-impl SwapFetcher {
-    pub async fn process_on_join_pool_trace(
-        &mut self,
-        localized_trace: &LocalizedTransactionTrace,
-        tx_hash: &TxHash,
-        trace_path: &str,
-        block_number: u64,
-        call_action: &CallAction,
-    ) -> Result<Option<SwapCsv>> {
-        let Ok(join_pool_in) = onJoinPoolCall::abi_decode(&call_action.input) else {
-            return Ok(None);
-        };
-        let Ok(join_pool_out) = onJoinPoolCall::abi_decode_returns(
-            localized_trace
-                .trace
-                .result
-                .as_ref()
-                .ok_or_eyre("onJoinPool trace didn't have result")?
-                .output(),
-        ) else {
-            return Ok(None);
-        };
-
-        let block_timestamp = block_number
-            .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
-            .await?;
-
-        let join_kind: JoinKind = join_pool_in
-            .userData
-            .get(0..32)
-            .ok_or_eyre("JoinKind not found in userData")?
-            .try_into()?;
-        if matches!(join_kind, JoinKind::Init) {
-            info!("Skip the join init pool.");
-            return Ok(None);
+    match join_kind {
+        JoinKind::ExactTokensInForBptOut => compute_join_pool_exact_asset_to_bpt(
+            state_by_sub_path,
+            sub_trace_address,
+            &join_pool_in,
+            &join_pool_out,
+        ),
+        JoinKind::TokenInForExactBptOut => Err(eyre!("TokenInForExactBptOut not implemented yet")),
+        JoinKind::AllTokensInForExactBptOut => {
+            Err(eyre!("AllTokensInForExactBptOut not implemented yet"))
         }
-
-        let (trace_address, sub_trace_address) = localized_trace
-            .trace
-            .trace_address
-            .split_at(localized_trace.trace.trace_address.len() - 1);
-        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, trace_address).await?;
-
-        let state_by_sub_path = StateBySubPath::new(&vm_trace);
-
-        let Some(swap) = (match join_kind {
-            JoinKind::ExactTokensInForBptOut => compute_join_pool_exact_asset_to_bpt(
-                &state_by_sub_path,
-                sub_trace_address,
-                &join_pool_in,
-                &join_pool_out,
-            )?,
-            JoinKind::TokenInForExactBptOut => {
-                return Err(eyre!("TokenInForExactBptOut not implemented yet"));
-            }
-            JoinKind::AllTokensInForExactBptOut => {
-                return Err(eyre!("AllTokensInForExactBptOut not implemented yet"));
-            }
-            JoinKind::Init => return Err(eyre!("Init join should already be handled")),
-        }) else {
-            return Ok(None);
-        };
-
-        Ok(Some(SwapCsv {
-            is_buy_eure: swap.is_buy_eure,
-            sdai_amount: swap.sdai_amount,
-            eure_amount: swap.eure_amount,
-            tx_hash: tx_hash.to_string(),
-            block_number,
-            block_timestamp,
-            trace_path: trace_path.to_string(),
-        }))
+        JoinKind::Init => Err(eyre!("Init join should already be handled")),
     }
 }
 

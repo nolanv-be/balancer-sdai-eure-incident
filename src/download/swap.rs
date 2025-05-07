@@ -2,12 +2,16 @@ mod on_exit_pool;
 mod on_join_pool;
 mod on_swap;
 
+use crate::download::block_timestamp::TryIntoBlockTimestamp;
+use crate::download::swap::on_exit_pool::{decode_in_out_on_exit_pool, process_on_exit_pool_trace};
+use crate::download::swap::on_join_pool::{decode_in_out_on_join_pool, process_on_join_pool_trace};
+use crate::download::swap::on_swap::{decode_in_out_on_swap, process_on_swap_trace};
 use crate::download::{ProviderFiller, block_timestamp::BlockTimestampFetcher};
 use crate::helper::{
     DivUp, MulUp, Position, StateBySubPath, StringifyArrayUsize, extract_sub_vm_trace,
     fetch_sub_vm_trace, save_trace_to_file,
 };
-use alloy::primitives::U64;
+use alloy::primitives::{TxHash, U64};
 use alloy::providers::Provider;
 use alloy::{
     primitives::{Address, B256, BlockNumber, U256, address, b256},
@@ -117,10 +121,16 @@ impl SwapFetcher {
             }
             let tx_hash = localized_trace.transaction_hash.ok_or_eyre("no tx_hash")?;
             let trace_path = localized_trace.trace.trace_address.stringify_vec_usize();
+            let block_number = localized_trace
+                .block_number
+                .ok_or_eyre("Block number is missing")?;
+            let block_timestamp = block_number
+                .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
+                .await?;
 
             if self
                 .swap_csv_by_tx_hash_trace_path
-                .contains_key(&(tx_hash.to_string(), trace_path.to_string()))
+                .contains_key(&(tx_hash.to_string(), trace_path.clone()))
             {
                 debug!("Skip tx already fetched");
                 continue;
@@ -140,79 +150,136 @@ impl SwapFetcher {
             let Some(call_action) = localized_trace.trace.action.as_call() else {
                 continue;
             };
-            let block_number = localized_trace
-                .block_number
-                .ok_or_eyre("Block number is missing")?;
+            let Some(trace_output) = localized_trace.trace.result.as_ref() else {
+                continue;
+            };
 
-            match self
-                .process_on_swap_trace(
-                    &localized_trace,
-                    &tx_hash,
-                    &trace_path,
-                    block_number,
-                    call_action,
-                )
-                .await
-            {
-                Ok(Some(swap_csv)) => {
-                    debug!("onSwap() => {:?}", swap_csv);
-                    self.insert_swap_csv(swap_csv.clone())?;
-                    swap_csv_vec.push(swap_csv);
-                }
-                Err(e) => {
-                    self.log_processing_failed(&localized_trace, &tx_hash).await;
-                    bail!("Failed to process onSwap trace\n{:?}", e);
-                }
-                Ok(None) => {}
+            let swap_maybe = decode_in_out_on_swap(call_action, trace_output)?;
+            let join_pool_maybe = decode_in_out_on_join_pool(call_action, trace_output)?;
+            let exit_pool_maybe = decode_in_out_on_exit_pool(call_action, trace_output)?;
+
+            if swap_maybe.is_none() && join_pool_maybe.is_none() && exit_pool_maybe.is_none() {
+                continue;
             }
 
-            match self
-                .process_on_join_pool_trace(
-                    &localized_trace,
-                    &tx_hash,
-                    &trace_path,
-                    block_number,
-                    call_action,
-                )
-                .await
-            {
-                Ok(Some(swap_csv)) => {
-                    debug!("onJoinPool() => {:?}", swap_csv);
-                    self.insert_swap_csv(swap_csv.clone())?;
-                    swap_csv_vec.push(swap_csv);
+            let (_, sub_trace_address) = localized_trace
+                .trace
+                .trace_address
+                .split_at(localized_trace.trace.trace_address.len() - 1);
+            let state_by_sub_path = self
+                .fetch_state_by_sub_path(&localized_trace, &tx_hash)
+                .await?;
+
+            if let Some((swap_in, swap_out)) = swap_maybe {
+                match process_on_swap_trace(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    swap_in,
+                    swap_out,
+                ) {
+                    Ok(Some(swap)) => {
+                        let swap_csv = SwapCsv {
+                            is_buy_eure: swap.is_buy_eure,
+                            sdai_amount: swap.sdai_amount,
+                            eure_amount: swap.eure_amount,
+                            block_number,
+                            block_timestamp,
+                            tx_hash: tx_hash.to_string(),
+                            trace_path: trace_path.clone(),
+                        };
+
+                        debug!("onSwap() => {:?}", swap_csv);
+                        self.insert_swap_csv(swap_csv.clone())?;
+                        swap_csv_vec.push(swap_csv);
+                        continue;
+                    }
+                    Err(e) => {
+                        self.log_processing_failed(&localized_trace, &tx_hash).await;
+                        bail!("Failed to process onSwap trace\n{:?}", e);
+                    }
+                    Ok(None) => {}
                 }
-                Err(e) => {
-                    self.log_processing_failed(&localized_trace, &tx_hash).await;
-                    bail!("Failed to process onJoinPool trace\n{:?}", e);
-                }
-                Ok(None) => {}
             }
 
-            match self
-                .process_on_exit_pool_trace(
-                    &localized_trace,
-                    &tx_hash,
-                    &trace_path,
-                    block_number,
-                    call_action,
-                )
-                .await
-            {
-                Ok(Some(swap_csv)) => {
-                    debug!("onExitPool() => {:?}", swap_csv);
-                    self.insert_swap_csv(swap_csv.clone())?;
-                    swap_csv_vec.push(swap_csv);
+            if let Some((join_pool_in, join_pool_out)) = join_pool_maybe {
+                match process_on_join_pool_trace(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    join_pool_in,
+                    join_pool_out,
+                ) {
+                    Ok(Some(swap)) => {
+                        let swap_csv = SwapCsv {
+                            is_buy_eure: swap.is_buy_eure,
+                            sdai_amount: swap.sdai_amount,
+                            eure_amount: swap.eure_amount,
+                            block_number,
+                            block_timestamp,
+                            tx_hash: tx_hash.to_string(),
+                            trace_path: trace_path.clone(),
+                        };
+
+                        debug!("onJoinPool() => {:?}", swap_csv);
+                        self.insert_swap_csv(swap_csv.clone())?;
+                        swap_csv_vec.push(swap_csv);
+                        continue;
+                    }
+                    Err(e) => {
+                        self.log_processing_failed(&localized_trace, &tx_hash).await;
+                        bail!("Failed to process onJoinPool trace\n{:?}", e);
+                    }
+                    Ok(None) => {}
                 }
-                Err(e) => {
-                    self.log_processing_failed(&localized_trace, &tx_hash).await;
-                    bail!("Failed to process onExitPool trace\n{:?}", e);
+            }
+            if let Some((exit_pool_in, exit_pool_out)) = exit_pool_maybe {
+                match process_on_exit_pool_trace(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    exit_pool_in,
+                    exit_pool_out,
+                ) {
+                    Ok(Some(swap)) => {
+                        let swap_csv = SwapCsv {
+                            is_buy_eure: swap.is_buy_eure,
+                            sdai_amount: swap.sdai_amount,
+                            eure_amount: swap.eure_amount,
+                            block_number,
+                            block_timestamp,
+                            tx_hash: tx_hash.to_string(),
+                            trace_path: trace_path.clone(),
+                        };
+
+                        debug!("onExitPool() => {:?}", swap_csv);
+                        self.insert_swap_csv(swap_csv.clone())?;
+                        swap_csv_vec.push(swap_csv);
+                        continue;
+                    }
+                    Err(e) => {
+                        self.log_processing_failed(&localized_trace, &tx_hash).await;
+                        bail!("Failed to process onExitPool trace\n{:?}", e);
+                    }
+                    Ok(None) => {}
                 }
-                Ok(None) => {}
             }
         }
 
         Ok(swap_csv_vec)
     }
+
+    async fn fetch_state_by_sub_path(
+        &self,
+        localized_trace: &LocalizedTransactionTrace,
+        tx_hash: &TxHash,
+    ) -> Result<StateBySubPath> {
+        let (trace_address, _) = localized_trace
+            .trace
+            .trace_address
+            .split_at(localized_trace.trace.trace_address.len() - 1);
+        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, trace_address).await?;
+
+        Ok(StateBySubPath::new(&vm_trace))
+    }
+
     async fn log_processing_failed(
         &self,
         localized_trace: &LocalizedTransactionTrace,
@@ -424,6 +491,9 @@ pub fn extract_price_cache_info_sdai_eure(
         PriceCacheInfo::try_from(eure_price_cache)?,
     ))
 }
+
+// TODO need test => 0x1fcd65e2d840b13af7bdef65128452ff14a942d525663e7e166fa64e4efcc919
+//[2025-05-07T14:13:10Z DEBUG balancer_sdai_eure_incident::download::swap] onJoinPool() => SwapCsv { is_buy_eure: true, sdai_amount: "271901145992645227831", eure_amount: "73787581747842212270", block_number: 30517858, block_timestamp: 1697628530, tx_hash: "0x1fcd65e2d840b13af7bdef65128452ff14a942d525663e7e166fa64e4efcc919", trace_path: "1" }
 
 /*#[cfg(test)]
 mod tests {

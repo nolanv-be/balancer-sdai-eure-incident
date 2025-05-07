@@ -1,10 +1,7 @@
-use crate::download::block_timestamp::TryIntoBlockTimestamp;
-use crate::download::swap::{
-    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
-};
-use crate::helper::{StateBySubPath, fetch_sub_vm_trace};
-use alloy::primitives::{TxHash, U256};
-use alloy::rpc::types::trace::parity::{CallAction, LocalizedTransactionTrace};
+use crate::download::swap::{EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, compute_sdai_eure_from_bpt};
+use crate::helper::StateBySubPath;
+use alloy::primitives::U256;
+use alloy::rpc::types::trace::parity::{CallAction, TraceOutput};
 use alloy::sol;
 use alloy::sol_types::SolCall;
 use eyre::{OptionExt, Result, WrapErr, eyre};
@@ -34,74 +31,45 @@ impl TryFrom<&[u8]> for ExitKind {
     }
 }
 
-impl SwapFetcher {
-    pub async fn process_on_exit_pool_trace(
-        &mut self,
-        localized_trace: &LocalizedTransactionTrace,
-        tx_hash: &TxHash,
-        trace_path: &str,
-        block_number: u64,
-        call_action: &CallAction,
-    ) -> Result<Option<SwapCsv>> {
-        let Ok(exit_pool_in) = onExitPoolCall::abi_decode(&call_action.input) else {
-            return Ok(None);
-        };
-        let Ok(exit_pool_out) = onExitPoolCall::abi_decode_returns(
-            localized_trace
-                .trace
-                .result
-                .as_ref()
-                .ok_or_eyre("onJoinPool trace didn't have result")?
-                .output(),
-        ) else {
-            return Ok(None);
-        };
+pub fn decode_in_out_on_exit_pool(
+    call_action: &CallAction,
+    trace_output: &TraceOutput,
+) -> Result<Option<(onExitPoolCall, onExitPoolReturn)>> {
+    let Ok(exit_pool_in) = onExitPoolCall::abi_decode(&call_action.input) else {
+        return Ok(None);
+    };
+    let Ok(exit_pool_out) = onExitPoolCall::abi_decode_returns(trace_output.output()) else {
+        return Ok(None);
+    };
+    Ok(Some((exit_pool_in, exit_pool_out)))
+}
 
-        let block_timestamp = block_number
-            .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
-            .await?;
+pub fn process_on_exit_pool_trace(
+    state_by_sub_path: &StateBySubPath,
+    sub_trace_address: &[usize],
+    exit_pool_in: onExitPoolCall,
+    exit_pool_out: onExitPoolReturn,
+) -> Result<Option<Swap>> {
+    let exit_kind: ExitKind = exit_pool_in
+        .userData
+        .get(0..32)
+        .ok_or_eyre("JoinKind not found in userData")?
+        .try_into()?;
 
-        let exit_kind: ExitKind = exit_pool_in
-            .userData
-            .get(0..32)
-            .ok_or_eyre("JoinKind not found in userData")?
-            .try_into()?;
-
-        let (trace_address, sub_trace_address) = localized_trace
-            .trace
-            .trace_address
-            .split_at(localized_trace.trace.trace_address.len() - 1);
-        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, trace_address).await?;
-
-        let state_by_sub_path = StateBySubPath::new(&vm_trace);
-
-        let Some(swap) = (match exit_kind {
-            ExitKind::ExactBptInForOneTokenOut => compute_exit_pool_exact_bpt_to_one_asset(
-                &state_by_sub_path,
-                sub_trace_address,
-                &exit_pool_in,
-                &exit_pool_out,
-            )?,
-            ExitKind::BptInForExactTokensOut => {
-                return Err(eyre!("BptInForExactTokensOut not implemented yet"));
-            }
-            ExitKind::ExactBptInForAllTokensOut => {
-                debug!("Skip exit pool to all token, no swap done");
-                return Ok(None);
-            }
-        }) else {
-            return Ok(None);
-        };
-
-        Ok(Some(SwapCsv {
-            is_buy_eure: swap.is_buy_eure,
-            sdai_amount: swap.sdai_amount,
-            eure_amount: swap.eure_amount,
-            tx_hash: tx_hash.to_string(),
-            block_number,
-            block_timestamp,
-            trace_path: trace_path.to_string(),
-        }))
+    match exit_kind {
+        ExitKind::ExactBptInForOneTokenOut => compute_exit_pool_exact_bpt_to_one_asset(
+            state_by_sub_path,
+            sub_trace_address,
+            &exit_pool_in,
+            &exit_pool_out,
+        ),
+        ExitKind::BptInForExactTokensOut => {
+            Err(eyre!("BptInForExactTokensOut not implemented yet"))
+        }
+        ExitKind::ExactBptInForAllTokensOut => {
+            debug!("Skip exit pool to all token, no swap done");
+            Ok(None)
+        }
     }
 }
 
