@@ -1,6 +1,6 @@
 use crate::download::block_timestamp::TryIntoBlockTimestamp;
 use crate::download::swap::{
-    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
+    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
 };
 use crate::helper::{Position, StateBySubPath, fetch_sub_vm_trace};
 use alloy::primitives::{B256, TxHash, U256, keccak256};
@@ -79,25 +79,33 @@ impl SwapFetcher {
 
         let state_by_sub_path = StateBySubPath::new(&vm_trace);
 
-        match join_kind {
+        let Some(swap) = (match join_kind {
             JoinKind::ExactTokensInForBptOut => compute_join_pool_exact_asset_to_bpt(
                 &state_by_sub_path,
                 sub_trace_address,
                 &join_pool_in,
                 &join_pool_out,
-                block_number,
-                block_timestamp,
-                tx_hash,
-                trace_path,
-            ),
+            )?,
             JoinKind::TokenInForExactBptOut => {
-                Err(eyre!("TokenInForExactBptOut not implemented yet"))
+                return Err(eyre!("TokenInForExactBptOut not implemented yet"));
             }
             JoinKind::AllTokensInForExactBptOut => {
-                Err(eyre!("AllTokensInForExactBptOut not implemented yet"))
+                return Err(eyre!("AllTokensInForExactBptOut not implemented yet"));
             }
-            JoinKind::Init => Err(eyre!("Init join should already be handled")),
-        }
+            JoinKind::Init => return Err(eyre!("Init join should already be handled")),
+        }) else {
+            return Ok(None);
+        };
+
+        Ok(Some(SwapCsv {
+            is_buy_eure: swap.is_buy_eure,
+            sdai_amount: swap.sdai_amount,
+            eure_amount: swap.eure_amount,
+            tx_hash: tx_hash.to_string(),
+            block_number,
+            block_timestamp,
+            trace_path: trace_path.to_string(),
+        }))
     }
 }
 
@@ -106,11 +114,7 @@ fn compute_join_pool_exact_asset_to_bpt(
     sub_trace_address: &[usize],
     join_pool_in: &onJoinPoolCall,
     join_pool_out: &onJoinPoolReturn,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> Result<Option<SwapCsv>> {
+) -> Result<Option<Swap>> {
     let is_bpt_mint = true;
     let sdai_sent = join_pool_out
         ._0
@@ -165,14 +169,10 @@ fn compute_join_pool_exact_asset_to_bpt(
                 .checked_sub(*eure_sent)
                 .ok_or_eyre("Buy EURe but our EURe amount has decrease\n{:?}")?;
 
-            Ok(Some(SwapCsv {
+            Ok(Some(Swap {
                 is_buy_eure: true,
                 sdai_amount: sdai_swap.to_string(),
                 eure_amount: eure_swap.to_string(),
-                block_number,
-                block_timestamp,
-                tx_hash: tx_hash.to_string(),
-                trace_path: trace_path.to_string(),
             }))
         }
         std::cmp::Ordering::Less => {
@@ -184,14 +184,10 @@ fn compute_join_pool_exact_asset_to_bpt(
                 .checked_sub(eure_from_bpt)
                 .ok_or_eyre("Sell EURe but our sDAI amount had increase")?;
 
-            Ok(Some(SwapCsv {
+            Ok(Some(Swap {
                 is_buy_eure: false,
                 sdai_amount: sdai_swap.to_string(),
                 eure_amount: eure_swap.to_string(),
-                block_number,
-                block_timestamp,
-                tx_hash: tx_hash.to_string(),
-                trace_path: trace_path.to_string(),
             }))
         }
     }

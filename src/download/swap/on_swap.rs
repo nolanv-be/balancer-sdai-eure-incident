@@ -1,7 +1,7 @@
 use crate::download::block_timestamp::TryIntoBlockTimestamp;
 use crate::download::swap::{
     BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS, EURE_ARRAY_INDEX, SDAI_ADDRESS,
-    SDAI_ARRAY_INDEX, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
+    SDAI_ARRAY_INDEX, Swap, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
 };
 use crate::helper::{StateBySubPath, fetch_sub_vm_trace};
 use alloy::primitives::{TxHash, U256};
@@ -56,28 +56,20 @@ impl SwapFetcher {
             .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
             .await?;
 
-        match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
-            (SDAI_ADDRESS, EURE_ADDRESS) => {
-                return Ok(Some(compute_swap_csv_sdai_to_eure(
-                    &swap_in,
-                    swap_out,
-                    block_number,
-                    block_timestamp,
-                    tx_hash,
-                    trace_path,
-                )));
-            }
-            (EURE_ADDRESS, SDAI_ADDRESS) => {
-                return Ok(Some(compute_swap_csv_eure_to_sdai(
-                    &swap_in,
-                    swap_out,
-                    block_number,
-                    block_timestamp,
-                    tx_hash,
-                    trace_path,
-                )));
-            }
-            _ => {}
+        if let Some(swap) = match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
+            (SDAI_ADDRESS, EURE_ADDRESS) => Some(compute_swap_csv_sdai_to_eure(&swap_in, swap_out)),
+            (EURE_ADDRESS, SDAI_ADDRESS) => Some(compute_swap_csv_eure_to_sdai(&swap_in, swap_out)),
+            _ => None,
+        } {
+            return Ok(Some(SwapCsv {
+                is_buy_eure: swap.is_buy_eure,
+                sdai_amount: swap.sdai_amount,
+                eure_amount: swap.eure_amount,
+                tx_hash: tx_hash.to_string(),
+                block_number,
+                block_timestamp,
+                trace_path: trace_path.to_string(),
+            }));
         }
 
         let (trace_address, sub_trace_address) = localized_trace
@@ -88,98 +80,62 @@ impl SwapFetcher {
 
         let state_by_sub_path = StateBySubPath::new(&vm_trace);
 
-        match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
-            (BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS) => {
-                Ok(Some(compute_swap_csv_bpt_to_eure(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    &swap_in,
-                    swap_out,
-                    block_number,
-                    block_timestamp,
-                    tx_hash,
-                    trace_path,
-                )?))
-            }
-            (BALANCER_SDAI_EURE_POOL_ADDRESS, SDAI_ADDRESS) => {
-                Ok(Some(compute_swap_csv_bpt_to_sdai(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    &swap_in,
-                    swap_out,
-                    block_number,
-                    block_timestamp,
-                    tx_hash,
-                    trace_path,
-                )?))
-            }
-            (EURE_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
-                Ok(Some(compute_swap_csv_eure_to_bpt(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    &swap_in,
-                    swap_out,
-                    block_number,
-                    block_timestamp,
-                    tx_hash,
-                    trace_path,
-                )?))
-            }
-            (SDAI_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
-                Ok(Some(compute_swap_csv_sdai_to_bpt(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    &swap_in,
-                    swap_out,
-                    block_number,
-                    block_timestamp,
-                    tx_hash,
-                    trace_path,
-                )?))
-            }
+        let swap = match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
+            (BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS) => compute_swap_csv_bpt_to_eure(
+                &state_by_sub_path,
+                sub_trace_address,
+                &swap_in,
+                swap_out,
+            )?,
+            (BALANCER_SDAI_EURE_POOL_ADDRESS, SDAI_ADDRESS) => compute_swap_csv_bpt_to_sdai(
+                &state_by_sub_path,
+                sub_trace_address,
+                &swap_in,
+                swap_out,
+            )?,
+            (EURE_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => compute_swap_csv_eure_to_bpt(
+                &state_by_sub_path,
+                sub_trace_address,
+                &swap_in,
+                swap_out,
+            )?,
+            (SDAI_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => compute_swap_csv_sdai_to_bpt(
+                &state_by_sub_path,
+                sub_trace_address,
+                &swap_in,
+                swap_out,
+            )?,
             (SDAI_ADDRESS, SDAI_ADDRESS)
             | (EURE_ADDRESS, EURE_ADDRESS)
             | (BALANCER_SDAI_EURE_POOL_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
-                Err(eyre!("onSwap same in and out"))
+                return Err(eyre!("onSwap same in and out"));
             }
-            _ => Err(eyre::eyre!("onSwap unknown token")),
-        }
+            _ => return Err(eyre::eyre!("onSwap unknown token")),
+        };
+
+        Ok(Some(SwapCsv {
+            is_buy_eure: swap.is_buy_eure,
+            sdai_amount: swap.sdai_amount,
+            eure_amount: swap.eure_amount,
+            tx_hash: tx_hash.to_string(),
+            block_number,
+            block_timestamp,
+            trace_path: trace_path.to_string(),
+        }))
     }
 }
-fn compute_swap_csv_sdai_to_eure(
-    swap_in: &onSwapCall,
-    eure_received: U256,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> SwapCsv {
-    SwapCsv {
+fn compute_swap_csv_sdai_to_eure(swap_in: &onSwapCall, eure_received: U256) -> Swap {
+    Swap {
         is_buy_eure: true,
         sdai_amount: swap_in.swapRequest.amount.to_string(),
         eure_amount: eure_received.to_string(),
-        block_number,
-        block_timestamp,
-        tx_hash: tx_hash.to_string(),
-        trace_path: trace_path.to_string(),
     }
 }
-fn compute_swap_csv_eure_to_sdai(
-    swap_in: &onSwapCall,
-    sdai_received: U256,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> SwapCsv {
-    SwapCsv {
+fn compute_swap_csv_eure_to_sdai(swap_in: &onSwapCall, sdai_received: U256) -> Swap {
+    Swap {
         is_buy_eure: false,
         sdai_amount: sdai_received.to_string(),
         eure_amount: swap_in.swapRequest.amount.to_string(),
-        block_number,
-        block_timestamp,
-        tx_hash: tx_hash.to_string(),
-        trace_path: trace_path.to_string(),
     }
 }
 fn compute_swap_csv_bpt_to_sdai(
@@ -187,11 +143,7 @@ fn compute_swap_csv_bpt_to_sdai(
     sub_trace_address: &[usize],
     swap_in: &onSwapCall,
     sdai_received: U256,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> Result<SwapCsv> {
+) -> Result<Swap> {
     let is_bpt_mint = false;
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
         state_by_sub_path,
@@ -200,20 +152,16 @@ fn compute_swap_csv_bpt_to_sdai(
         is_bpt_mint,
         &swap_in.balances,
     )
-    .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
+        .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
     let sdai_swapped_from_eure = sdai_received.checked_sub(sdai_from_bpt).ok_or_eyre(
         "The amount of sDAI received is less than the amount of sDAI from BPT ownership",
     )?;
 
-    Ok(SwapCsv {
+    Ok(Swap {
         is_buy_eure: false,
         sdai_amount: sdai_swapped_from_eure.to_string(),
         eure_amount: eure_from_bpt.to_string(),
-        block_number,
-        block_timestamp,
-        tx_hash: tx_hash.to_string(),
-        trace_path: trace_path.to_string(),
     })
 }
 fn compute_swap_csv_bpt_to_eure(
@@ -221,11 +169,7 @@ fn compute_swap_csv_bpt_to_eure(
     sub_trace_address: &[usize],
     swap_in: &onSwapCall,
     eure_received: U256,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> Result<SwapCsv> {
+) -> Result<Swap> {
     let is_bpt_mint = false;
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
         state_by_sub_path,
@@ -234,20 +178,16 @@ fn compute_swap_csv_bpt_to_eure(
         is_bpt_mint,
         &swap_in.balances,
     )
-    .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
+        .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
     let eure_swapped_from_sdai = eure_received.checked_sub(eure_from_bpt).ok_or_eyre(
         "The amount of EURe received is less than the amount of EURe from BPT ownership",
     )?;
 
-    Ok(SwapCsv {
+    Ok(Swap {
         is_buy_eure: true,
         sdai_amount: sdai_from_bpt.to_string(),
         eure_amount: eure_swapped_from_sdai.to_string(),
-        block_number,
-        block_timestamp,
-        tx_hash: tx_hash.to_string(),
-        trace_path: trace_path.to_string(),
     })
 }
 fn compute_swap_csv_sdai_to_bpt(
@@ -255,11 +195,7 @@ fn compute_swap_csv_sdai_to_bpt(
     sub_trace_address: &[usize],
     swap_in: &onSwapCall,
     bpt_received: U256,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> Result<SwapCsv> {
+) -> Result<Swap> {
     let is_bpt_mint = true;
 
     let mut balances = swap_in.balances.clone();
@@ -276,7 +212,7 @@ fn compute_swap_csv_sdai_to_bpt(
         is_bpt_mint,
         &balances,
     )
-    .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
+        .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
     let sdai_swapped_to_eure = swap_in
         .swapRequest
@@ -286,14 +222,10 @@ fn compute_swap_csv_sdai_to_bpt(
             "The amount of sDAI swapped is less than the amount of sDAI from BPT ownership",
         )?;
 
-    Ok(SwapCsv {
+    Ok(Swap {
         is_buy_eure: true,
         sdai_amount: sdai_swapped_to_eure.to_string(),
         eure_amount: eure_from_bpt.to_string(),
-        block_number,
-        block_timestamp,
-        tx_hash: tx_hash.to_string(),
-        trace_path: trace_path.to_string(),
     })
 }
 fn compute_swap_csv_eure_to_bpt(
@@ -301,11 +233,7 @@ fn compute_swap_csv_eure_to_bpt(
     sub_trace_address: &[usize],
     swap_in: &onSwapCall,
     bpt_received: U256,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> Result<SwapCsv> {
+) -> Result<Swap> {
     let is_bpt_mint = true;
 
     let mut balances = swap_in.balances.clone();
@@ -322,7 +250,7 @@ fn compute_swap_csv_eure_to_bpt(
         is_bpt_mint,
         &balances,
     )
-    .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
+        .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
     let eure_swapped_to_sdai = swap_in
         .swapRequest
@@ -332,13 +260,9 @@ fn compute_swap_csv_eure_to_bpt(
             "The amount of EURe swapped is less than the amount of EURe from BPT ownership",
         )?;
 
-    Ok(SwapCsv {
+    Ok(Swap {
         is_buy_eure: false,
         sdai_amount: sdai_from_bpt.to_string(),
         eure_amount: eure_swapped_to_sdai.to_string(),
-        block_number,
-        block_timestamp,
-        tx_hash: tx_hash.to_string(),
-        trace_path: trace_path.to_string(),
     })
 }

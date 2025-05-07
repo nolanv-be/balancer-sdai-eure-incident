@@ -7,6 +7,7 @@ use crate::helper::{
     DivUp, MulUp, Position, StateBySubPath, StringifyArrayUsize, extract_sub_vm_trace,
     fetch_sub_vm_trace, save_trace_to_file,
 };
+use alloy::primitives::U64;
 use alloy::providers::Provider;
 use alloy::{
     primitives::{Address, B256, BlockNumber, U256, address, b256},
@@ -43,6 +44,13 @@ pub struct SwapCsv {
     pub block_timestamp: u64,
     pub tx_hash: String,
     pub trace_path: String,
+}
+
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
+pub struct Swap {
+    pub is_buy_eure: bool,
+    pub sdai_amount: String,
+    pub eure_amount: String,
 }
 
 impl SwapFetcher {
@@ -335,6 +343,86 @@ pub fn compute_sdai_eure_from_bpt(
         .wrap_err("Failed to mul_up eure_balance_pool by bpt_ratio")?;
 
     Ok((bpt_hold_sdai, bpt_hold_eure))
+}
+
+pub struct PriceCacheInfo {
+    pub last_update: u64,
+    pub duration: u64,
+    pub price_old: U256,
+    pub price_new: U256,
+}
+impl TryFrom<B256> for PriceCacheInfo {
+    type Error = eyre::Error;
+
+    fn try_from(storage_value: B256) -> Result<Self> {
+        let last_update = U64::try_from_be_slice(
+            storage_value
+                .get(0..4)
+                .ok_or_eyre("Failed to get last_update")?,
+        )
+        .ok_or_eyre("Failed to convert last_update to u64")?
+        .to();
+        let duration = U64::try_from_be_slice(
+            storage_value
+                .get(4..8)
+                .ok_or_eyre("Failed to get duration")?,
+        )
+        .ok_or_eyre("Failed to convert duration to u64")?
+        .to();
+        let price_old = U256::try_from_be_slice(
+            storage_value
+                .get(8..20)
+                .ok_or_eyre("Failed to get price_old")?,
+        )
+        .ok_or_eyre("Failed to convert price_old to u256")?;
+        let price_new = U256::try_from_be_slice(
+            storage_value
+                .get(20..32)
+                .ok_or_eyre("Failed to get price_new")?,
+        )
+        .ok_or_eyre("Failed to convert price_new to u256")?;
+
+        Ok(PriceCacheInfo {
+            last_update,
+            duration,
+            price_old,
+            price_new,
+        })
+    }
+}
+pub fn extract_price_cache_info_sdai_eure(
+    state_by_sub_path: &StateBySubPath,
+) -> Result<(PriceCacheInfo, PriceCacheInfo)> {
+    const SDAI_PRICE_CACHE_KEY: B256 =
+        b256!("13da86008ba1c6922daee3e07db95305ef49ebced9f5467a0b8613fcc6b343e3");
+    const EURE_PRICE_CACHE_KEY: B256 =
+        b256!("bbc70db1b6c7afd11e79c0fb0051300458f1a3acb8ee9789d9b6b26c61ad9bc7");
+    const SUB_PATH: &[usize] = &[1];
+
+    let sdai_price_cache = state_by_sub_path
+        .get_load_value(&SDAI_PRICE_CACHE_KEY, SUB_PATH, &Position::Last)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Failed to get sDAI price cache for trace_address {:?} in this position {:?}",
+                SUB_PATH,
+                &Position::Last
+            )
+        })?;
+    let eure_price_cache = state_by_sub_path
+        .get_load_value(&EURE_PRICE_CACHE_KEY, SUB_PATH, &Position::Last)
+        .ok_or_else(|| {
+            eyre::eyre!(
+                "Failed to get EURe price cache for trace_address {:?} in this position {:?}",
+                SUB_PATH,
+                &Position::Last
+            )
+        })?;
+    debug!("state_by_sub_path: {:#?}", state_by_sub_path);
+
+    Ok((
+        PriceCacheInfo::try_from(sdai_price_cache)?,
+        PriceCacheInfo::try_from(eure_price_cache)?,
+    ))
 }
 
 /*#[cfg(test)]

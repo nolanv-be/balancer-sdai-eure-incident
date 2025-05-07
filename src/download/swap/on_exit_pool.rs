@@ -1,6 +1,6 @@
 use crate::download::block_timestamp::TryIntoBlockTimestamp;
 use crate::download::swap::{
-    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
+    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
 };
 use crate::helper::{StateBySubPath, fetch_sub_vm_trace};
 use alloy::primitives::{TxHash, U256};
@@ -75,25 +75,33 @@ impl SwapFetcher {
 
         let state_by_sub_path = StateBySubPath::new(&vm_trace);
 
-        match exit_kind {
+        let Some(swap) = (match exit_kind {
             ExitKind::ExactBptInForOneTokenOut => compute_exit_pool_exact_bpt_to_one_asset(
                 &state_by_sub_path,
                 sub_trace_address,
                 &exit_pool_in,
                 &exit_pool_out,
-                block_number,
-                block_timestamp,
-                tx_hash,
-                trace_path,
-            ),
+            )?,
             ExitKind::BptInForExactTokensOut => {
-                Err(eyre!("BptInForExactTokensOut not implemented yet"))
+                return Err(eyre!("BptInForExactTokensOut not implemented yet"));
             }
             ExitKind::ExactBptInForAllTokensOut => {
                 debug!("Skip exit pool to all token, no swap done");
-                Ok(None)
+                return Ok(None);
             }
-        }
+        }) else {
+            return Ok(None);
+        };
+
+        Ok(Some(SwapCsv {
+            is_buy_eure: swap.is_buy_eure,
+            sdai_amount: swap.sdai_amount,
+            eure_amount: swap.eure_amount,
+            tx_hash: tx_hash.to_string(),
+            block_number,
+            block_timestamp,
+            trace_path: trace_path.to_string(),
+        }))
     }
 }
 
@@ -102,11 +110,7 @@ fn compute_exit_pool_exact_bpt_to_one_asset(
     sub_trace_address: &[usize],
     exit_pool_in: &onExitPoolCall,
     exit_pool_out: &onExitPoolReturn,
-    block_number: u64,
-    block_timestamp: u64,
-    tx_hash: &TxHash,
-    trace_path: &str,
-) -> Result<Option<SwapCsv>> {
+) -> Result<Option<Swap>> {
     let is_bpt_mint = false;
     let bpt_sent: U256 = U256::try_from_be_slice(
         exit_pool_in
@@ -142,14 +146,10 @@ fn compute_exit_pool_exact_bpt_to_one_asset(
                 "The amount of sDAI received is less than the amount of sDAI from BPT ownership",
             )?;
 
-            Ok(Some(SwapCsv {
+            Ok(Some(Swap {
                 is_buy_eure: false,
                 sdai_amount: sdai_swapped_from_bpt.to_string(),
                 eure_amount: eure_from_bpt.to_string(),
-                block_number,
-                block_timestamp,
-                tx_hash: tx_hash.to_string(),
-                trace_path: trace_path.to_string(),
             }))
         }
         (&U256::ZERO, eure_received) => {
@@ -157,14 +157,10 @@ fn compute_exit_pool_exact_bpt_to_one_asset(
                 "The amount of EURe received is less than the amount of EURe from BPT ownership",
             )?;
 
-            Ok(Some(SwapCsv {
+            Ok(Some(Swap {
                 is_buy_eure: true,
                 sdai_amount: sdai_from_bpt.to_string(),
                 eure_amount: eure_swapped_from_bpt.to_string(),
-                block_number,
-                block_timestamp,
-                tx_hash: tx_hash.to_string(),
-                trace_path: trace_path.to_string(),
             }))
         }
         _ => Err(eyre!("Unknown asset received")),
