@@ -1,9 +1,8 @@
-use crate::download::block_timestamp::{BlockTimestampFetcher, TryIntoBlockTimestamp};
+use crate::download::block_timestamp::TryIntoBlockTimestamp;
 use crate::download::swap::{
     BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS, EURE_ARRAY_INDEX, SDAI_ADDRESS,
-    SDAI_ARRAY_INDEX, compute_sdai_eure_from_bpt,
+    SDAI_ARRAY_INDEX, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
 };
-use crate::download::{ProviderFiller, SwapCsv};
 use crate::helper::{StateBySubPath, fetch_sub_vm_trace};
 use alloy::primitives::{TxHash, U256};
 use alloy::rpc::types::trace::parity::{CallAction, LocalizedTransactionTrace};
@@ -32,103 +31,119 @@ sol!(
     function onSwap(SwapRequest memory swapRequest, uint256[] memory balances, uint256 indexIn, uint256 indexOut) internal virtual returns (uint256);
 );
 
-pub async fn process_on_swap_trace(
-    provider: &ProviderFiller,
-    block_timestamp_fetcher: &mut BlockTimestampFetcher,
-    localized_trace: &LocalizedTransactionTrace,
-    tx_hash: &TxHash,
-    block_number: u64,
-    call_action: &CallAction,
-) -> Result<Option<SwapCsv>> {
-    let Ok(swap_in) = onSwapCall::abi_decode(&call_action.input) else {
-        return Ok(None);
-    };
-    let swap_out = onSwapCall::abi_decode_returns(
-        localized_trace
+impl SwapFetcher {
+    pub async fn process_on_swap_trace(
+        &mut self,
+        localized_trace: &LocalizedTransactionTrace,
+        tx_hash: &TxHash,
+        trace_path: &str,
+        block_number: u64,
+        call_action: &CallAction,
+    ) -> Result<Option<SwapCsv>> {
+        let Ok(swap_in) = onSwapCall::abi_decode(&call_action.input) else {
+            return Ok(None);
+        };
+        let swap_out = onSwapCall::abi_decode_returns(
+            localized_trace
+                .trace
+                .result
+                .as_ref()
+                .ok_or_eyre("onSwap trace didn't have result")?
+                .output(),
+        )?;
+
+        let block_timestamp = block_number
+            .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
+            .await?;
+
+        match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
+            (SDAI_ADDRESS, EURE_ADDRESS) => {
+                return Ok(Some(compute_swap_csv_sdai_to_eure(
+                    &swap_in,
+                    swap_out,
+                    block_number,
+                    block_timestamp,
+                    tx_hash,
+                    trace_path,
+                )));
+            }
+            (EURE_ADDRESS, SDAI_ADDRESS) => {
+                return Ok(Some(compute_swap_csv_eure_to_sdai(
+                    &swap_in,
+                    swap_out,
+                    block_number,
+                    block_timestamp,
+                    tx_hash,
+                    trace_path,
+                )));
+            }
+            _ => {}
+        }
+
+        let (trace_address, sub_trace_address) = localized_trace
             .trace
-            .result
-            .as_ref()
-            .ok_or_eyre("onSwap trace didn't have result")?
-            .output(),
-    )?;
+            .trace_address
+            .split_at(localized_trace.trace.trace_address.len() - 1);
+        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, trace_address).await?;
 
-    let block_timestamp = block_number
-        .try_into_block_timestamp(block_timestamp_fetcher)
-        .await?;
+        let state_by_sub_path = StateBySubPath::new(&vm_trace);
 
-    match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
-        (SDAI_ADDRESS, EURE_ADDRESS) => {
-            return Ok(Some(compute_swap_csv_sdai_to_eure(
-                &swap_in,
-                swap_out,
-                block_number,
-                block_timestamp,
-                tx_hash,
-            )));
+        match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
+            (BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS) => {
+                Ok(Some(compute_swap_csv_bpt_to_eure(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    &swap_in,
+                    swap_out,
+                    block_number,
+                    block_timestamp,
+                    tx_hash,
+                    trace_path,
+                )?))
+            }
+            (BALANCER_SDAI_EURE_POOL_ADDRESS, SDAI_ADDRESS) => {
+                Ok(Some(compute_swap_csv_bpt_to_sdai(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    &swap_in,
+                    swap_out,
+                    block_number,
+                    block_timestamp,
+                    tx_hash,
+                    trace_path,
+                )?))
+            }
+            (EURE_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
+                Ok(Some(compute_swap_csv_eure_to_bpt(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    &swap_in,
+                    swap_out,
+                    block_number,
+                    block_timestamp,
+                    tx_hash,
+                    trace_path,
+                )?))
+            }
+            (SDAI_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
+                Ok(Some(compute_swap_csv_sdai_to_bpt(
+                    &state_by_sub_path,
+                    sub_trace_address,
+                    &swap_in,
+                    swap_out,
+                    block_number,
+                    block_timestamp,
+                    tx_hash,
+                    trace_path,
+                )?))
+            }
+            (SDAI_ADDRESS, SDAI_ADDRESS)
+            | (EURE_ADDRESS, EURE_ADDRESS)
+            | (BALANCER_SDAI_EURE_POOL_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
+                Err(eyre!("onSwap same in and out"))
+            }
+            _ => Err(eyre::eyre!("onSwap unknown token")),
         }
-        (EURE_ADDRESS, SDAI_ADDRESS) => {
-            return Ok(Some(compute_swap_csv_eure_to_sdai(
-                &swap_in,
-                swap_out,
-                block_number,
-                block_timestamp,
-                tx_hash,
-            )));
-        }
-        _ => {}
-    }
-
-    let (trace_address, sub_trace_address) = localized_trace
-        .trace
-        .trace_address
-        .split_at(localized_trace.trace.trace_address.len() - 1);
-    let vm_trace = fetch_sub_vm_trace(provider, *tx_hash, trace_address).await?;
-
-    let state_by_sub_path = StateBySubPath::new(&vm_trace);
-
-    match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
-        (BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS) => Ok(Some(compute_swap_csv_bpt_to_eure(
-            &state_by_sub_path,
-            sub_trace_address,
-            &swap_in,
-            swap_out,
-            block_number,
-            block_timestamp,
-            tx_hash,
-        )?)),
-        (BALANCER_SDAI_EURE_POOL_ADDRESS, SDAI_ADDRESS) => Ok(Some(compute_swap_csv_bpt_to_sdai(
-            &state_by_sub_path,
-            sub_trace_address,
-            &swap_in,
-            swap_out,
-            block_number,
-            block_timestamp,
-            tx_hash,
-        )?)),
-        (EURE_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => Ok(Some(compute_swap_csv_eure_to_bpt(
-            &state_by_sub_path,
-            sub_trace_address,
-            &swap_in,
-            swap_out,
-            block_number,
-            block_timestamp,
-            tx_hash,
-        )?)),
-        (SDAI_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => Ok(Some(compute_swap_csv_sdai_to_bpt(
-            &state_by_sub_path,
-            sub_trace_address,
-            &swap_in,
-            swap_out,
-            block_number,
-            block_timestamp,
-            tx_hash,
-        )?)),
-        (SDAI_ADDRESS, SDAI_ADDRESS)
-        | (EURE_ADDRESS, EURE_ADDRESS)
-        | (BALANCER_SDAI_EURE_POOL_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
-            Err(eyre!("onSwap same in and out"))
-        }
-        _ => Err(eyre::eyre!("onSwap unknown token")),
     }
 }
 fn compute_swap_csv_sdai_to_eure(
@@ -137,6 +152,7 @@ fn compute_swap_csv_sdai_to_eure(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> SwapCsv {
     SwapCsv {
         is_buy_eure: true,
@@ -145,6 +161,7 @@ fn compute_swap_csv_sdai_to_eure(
         block_number,
         block_timestamp,
         tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.to_string(),
     }
 }
 fn compute_swap_csv_eure_to_sdai(
@@ -153,6 +170,7 @@ fn compute_swap_csv_eure_to_sdai(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> SwapCsv {
     SwapCsv {
         is_buy_eure: false,
@@ -161,6 +179,7 @@ fn compute_swap_csv_eure_to_sdai(
         block_number,
         block_timestamp,
         tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.to_string(),
     }
 }
 fn compute_swap_csv_bpt_to_sdai(
@@ -171,6 +190,7 @@ fn compute_swap_csv_bpt_to_sdai(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> Result<SwapCsv> {
     let is_bpt_mint = false;
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
@@ -193,6 +213,7 @@ fn compute_swap_csv_bpt_to_sdai(
         block_number,
         block_timestamp,
         tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.to_string(),
     })
 }
 fn compute_swap_csv_bpt_to_eure(
@@ -203,6 +224,7 @@ fn compute_swap_csv_bpt_to_eure(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> Result<SwapCsv> {
     let is_bpt_mint = false;
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
@@ -225,6 +247,7 @@ fn compute_swap_csv_bpt_to_eure(
         block_number,
         block_timestamp,
         tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.to_string(),
     })
 }
 fn compute_swap_csv_sdai_to_bpt(
@@ -235,6 +258,7 @@ fn compute_swap_csv_sdai_to_bpt(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> Result<SwapCsv> {
     let is_bpt_mint = true;
 
@@ -269,6 +293,7 @@ fn compute_swap_csv_sdai_to_bpt(
         block_number,
         block_timestamp,
         tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.to_string(),
     })
 }
 fn compute_swap_csv_eure_to_bpt(
@@ -279,6 +304,7 @@ fn compute_swap_csv_eure_to_bpt(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> Result<SwapCsv> {
     let is_bpt_mint = true;
 
@@ -313,5 +339,6 @@ fn compute_swap_csv_eure_to_bpt(
         block_number,
         block_timestamp,
         tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.to_string(),
     })
 }

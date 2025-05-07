@@ -1,6 +1,7 @@
-use crate::download::block_timestamp::{BlockTimestampFetcher, TryIntoBlockTimestamp};
-use crate::download::swap::{EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, compute_sdai_eure_from_bpt};
-use crate::download::{ProviderFiller, SwapCsv};
+use crate::download::block_timestamp::TryIntoBlockTimestamp;
+use crate::download::swap::{
+    EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, SwapCsv, SwapFetcher, compute_sdai_eure_from_bpt,
+};
 use crate::helper::{Position, StateBySubPath, fetch_sub_vm_trace};
 use alloy::primitives::{B256, TxHash, U256, keccak256};
 use alloy::rpc::types::trace::parity::{CallAction, LocalizedTransactionTrace};
@@ -32,65 +33,71 @@ impl TryFrom<&[u8]> for JoinKind {
         }
     }
 }
-pub async fn process_on_join_pool_trace(
-    provider: &ProviderFiller,
-    block_timestamp_fetcher: &mut BlockTimestampFetcher,
-    localized_trace: &LocalizedTransactionTrace,
-    tx_hash: &TxHash,
-    block_number: u64,
-    call_action: &CallAction,
-) -> Result<Option<SwapCsv>> {
-    let Ok(join_pool_in) = onJoinPoolCall::abi_decode(&call_action.input) else {
-        return Ok(None);
-    };
-    let Ok(join_pool_out) = onJoinPoolCall::abi_decode_returns(
-        localized_trace
-            .trace
-            .result
-            .as_ref()
-            .ok_or_eyre("onJoinPool trace didn't have result")?
-            .output(),
-    ) else {
-        return Ok(None);
-    };
 
-    let block_timestamp = block_number
-        .try_into_block_timestamp(block_timestamp_fetcher)
-        .await?;
+impl SwapFetcher {
+    pub async fn process_on_join_pool_trace(
+        &mut self,
+        localized_trace: &LocalizedTransactionTrace,
+        tx_hash: &TxHash,
+        trace_path: &str,
+        block_number: u64,
+        call_action: &CallAction,
+    ) -> Result<Option<SwapCsv>> {
+        let Ok(join_pool_in) = onJoinPoolCall::abi_decode(&call_action.input) else {
+            return Ok(None);
+        };
+        let Ok(join_pool_out) = onJoinPoolCall::abi_decode_returns(
+            localized_trace
+                .trace
+                .result
+                .as_ref()
+                .ok_or_eyre("onJoinPool trace didn't have result")?
+                .output(),
+        ) else {
+            return Ok(None);
+        };
 
-    let join_kind: JoinKind = join_pool_in
-        .userData
-        .get(0..32)
-        .ok_or_eyre("JoinKind not found in userData")?
-        .try_into()?;
-    if matches!(join_kind, JoinKind::Init) {
-        info!("Skip the join init pool.");
-        return Ok(None);
-    }
+        let block_timestamp = block_number
+            .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
+            .await?;
 
-    let (trace_address, sub_trace_address) = localized_trace
-        .trace
-        .trace_address
-        .split_at(localized_trace.trace.trace_address.len() - 1);
-    let vm_trace = fetch_sub_vm_trace(provider, *tx_hash, trace_address).await?;
-
-    let state_by_sub_path = StateBySubPath::new(&vm_trace);
-
-    match join_kind {
-        JoinKind::ExactTokensInForBptOut => compute_join_pool_exact_asset_to_bpt(
-            &state_by_sub_path,
-            sub_trace_address,
-            &join_pool_in,
-            &join_pool_out,
-            block_number,
-            block_timestamp,
-            tx_hash,
-        ),
-        JoinKind::TokenInForExactBptOut => Err(eyre!("TokenInForExactBptOut not implemented yet")),
-        JoinKind::AllTokensInForExactBptOut => {
-            Err(eyre!("AllTokensInForExactBptOut not implemented yet"))
+        let join_kind: JoinKind = join_pool_in
+            .userData
+            .get(0..32)
+            .ok_or_eyre("JoinKind not found in userData")?
+            .try_into()?;
+        if matches!(join_kind, JoinKind::Init) {
+            info!("Skip the join init pool.");
+            return Ok(None);
         }
-        JoinKind::Init => Err(eyre!("Init join should already be handled")),
+
+        let (trace_address, sub_trace_address) = localized_trace
+            .trace
+            .trace_address
+            .split_at(localized_trace.trace.trace_address.len() - 1);
+        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, trace_address).await?;
+
+        let state_by_sub_path = StateBySubPath::new(&vm_trace);
+
+        match join_kind {
+            JoinKind::ExactTokensInForBptOut => compute_join_pool_exact_asset_to_bpt(
+                &state_by_sub_path,
+                sub_trace_address,
+                &join_pool_in,
+                &join_pool_out,
+                block_number,
+                block_timestamp,
+                tx_hash,
+                trace_path,
+            ),
+            JoinKind::TokenInForExactBptOut => {
+                Err(eyre!("TokenInForExactBptOut not implemented yet"))
+            }
+            JoinKind::AllTokensInForExactBptOut => {
+                Err(eyre!("AllTokensInForExactBptOut not implemented yet"))
+            }
+            JoinKind::Init => Err(eyre!("Init join should already be handled")),
+        }
     }
 }
 
@@ -102,6 +109,7 @@ fn compute_join_pool_exact_asset_to_bpt(
     block_number: u64,
     block_timestamp: u64,
     tx_hash: &TxHash,
+    trace_path: &str,
 ) -> Result<Option<SwapCsv>> {
     let is_bpt_mint = true;
     let sdai_sent = join_pool_out
@@ -164,6 +172,7 @@ fn compute_join_pool_exact_asset_to_bpt(
                 block_number,
                 block_timestamp,
                 tx_hash: tx_hash.to_string(),
+                trace_path: trace_path.to_string(),
             }))
         }
         std::cmp::Ordering::Less => {
@@ -182,6 +191,7 @@ fn compute_join_pool_exact_asset_to_bpt(
                 block_number,
                 block_timestamp,
                 tx_hash: tx_hash.to_string(),
+                trace_path: trace_path.to_string(),
             }))
         }
     }

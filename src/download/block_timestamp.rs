@@ -6,7 +6,7 @@ use log::info;
 use std::collections::HashMap;
 use std::fs::OpenOptions;
 
-const BLOCKS_CSV_FILE: &str = "blocks.csv";
+const BLOCKS_CSV_FILE: &str = "data/blocks.csv";
 pub struct BlockTimestampFetcher {
     provider: ProviderFiller,
     csv_writer: csv::Writer<std::fs::File>,
@@ -78,7 +78,7 @@ impl BlockTimestampFetcher {
         Ok(block_timestamp)
     }
 
-    pub async fn flush(&mut self) -> Result<()> {
+    pub fn flush(&mut self) -> Result<()> {
         self.csv_writer.flush()?;
         Ok(())
     }
