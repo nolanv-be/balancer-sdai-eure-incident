@@ -51,6 +51,22 @@ impl MulUp for U256 {
             .ok_or_eyre("mul_up (((a * b) - 1) / 10**18) + 1 overflow")
     }
 }
+
+pub trait StringifyArrayUsize
+where
+    Self: Sized,
+{
+    fn stringify_vec_usize(self) -> String;
+}
+impl StringifyArrayUsize for &[usize] {
+    fn stringify_vec_usize(self) -> String {
+        self.iter()
+            .map(ToString::to_string)
+            .collect::<Vec<String>>()
+            .join("-")
+    }
+}
+
 pub async fn fetch_sub_vm_trace(
     provider: &ProviderFiller,
     tx_hash: TxHash,
