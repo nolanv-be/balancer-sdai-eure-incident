@@ -56,6 +56,7 @@ pub struct SwapCsv {
     pub eure_price_old: String,
     pub sdai_price_new: String,
     pub eure_price_new: String,
+    pub swap_fee_percentage: String,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
@@ -63,6 +64,7 @@ pub struct Swap {
     pub is_buy_eure: bool,
     pub sdai_amount: String,
     pub eure_amount: String,
+    pub swap_fee_percentage: String,
 }
 
 impl SwapFetcher {
@@ -260,6 +262,7 @@ impl SwapFetcher {
                     eure_price_old: eure_price_cache_info.price_old,
                     sdai_price_new: sdai_price_cache_info.price_new,
                     eure_price_new: eure_price_cache_info.price_new,
+                    swap_fee_percentage: swap.swap_fee_percentage,
                 };
                 self.insert_swap_csv(swap_csv.clone())?;
                 swap_csv_vec.push(swap_csv);

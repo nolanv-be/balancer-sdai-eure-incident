@@ -118,6 +118,7 @@ fn compute_exit_pool_exact_bpt_to_one_asset(
                 is_buy_eure: false,
                 sdai_amount: sdai_swapped_from_bpt.to_string(),
                 eure_amount: eure_from_bpt.to_string(),
+                swap_fee_percentage: exit_pool_in.protocolSwapFeePercentage.to_string(),
             }))
         }
         (&U256::ZERO, eure_received) => {
@@ -129,6 +130,7 @@ fn compute_exit_pool_exact_bpt_to_one_asset(
                 is_buy_eure: true,
                 sdai_amount: sdai_from_bpt.to_string(),
                 eure_amount: eure_swapped_from_bpt.to_string(),
+                swap_fee_percentage: exit_pool_in.protocolSwapFeePercentage.to_string(),
             }))
         }
         _ => Err(eyre!("Unknown asset received")),
