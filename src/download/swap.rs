@@ -162,11 +162,14 @@ impl SwapFetcher {
                 continue;
             };
 
-            let swap_maybe = decode_in_out_on_swap(call_action, trace_output)?;
-            let join_pool_maybe = decode_in_out_on_join_pool(call_action, trace_output)?;
-            let exit_pool_maybe = decode_in_out_on_exit_pool(call_action, trace_output)?;
+            let on_swap_maybe = decode_in_out_on_swap(call_action, trace_output)?;
+            let on_join_pool_maybe = decode_in_out_on_join_pool(call_action, trace_output)?;
+            let on_exit_pool_maybe = decode_in_out_on_exit_pool(call_action, trace_output)?;
 
-            if swap_maybe.is_none() && join_pool_maybe.is_none() && exit_pool_maybe.is_none() {
+            if on_swap_maybe.is_none()
+                && on_join_pool_maybe.is_none()
+                && on_exit_pool_maybe.is_none()
+            {
                 continue;
             }
 
@@ -181,120 +184,85 @@ impl SwapFetcher {
             let (sdai_price_cache_info, eure_price_cache_info) =
                 extract_price_cache_info_sdai_eure(&state_by_sub_path, sub_trace_address)?;
 
-            if let Some((swap_in, swap_out)) = swap_maybe {
-                match process_on_swap_trace(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    swap_in,
-                    swap_out,
-                ) {
-                    Ok(Some(swap)) => {
-                        let swap_csv = SwapCsv {
-                            is_buy_eure: swap.is_buy_eure,
-                            sdai_amount: swap.sdai_amount,
-                            eure_amount: swap.eure_amount,
-                            block_number,
-                            block_timestamp,
-                            tx_hash: tx_hash.to_string(),
-                            trace_path: trace_path.clone(),
-                            sdai_last_update: sdai_price_cache_info.last_update,
-                            eure_last_update: eure_price_cache_info.last_update,
-                            sdai_duration: sdai_price_cache_info.duration,
-                            eure_duration: eure_price_cache_info.duration,
-                            sdai_price_old: sdai_price_cache_info.price_old,
-                            eure_price_old: eure_price_cache_info.price_old,
-                            sdai_price_new: sdai_price_cache_info.price_new,
-                            eure_price_new: eure_price_cache_info.price_new,
-                        };
-
-                        debug!("onSwap() => {:?}", swap_csv);
-                        self.insert_swap_csv(swap_csv.clone())?;
-                        swap_csv_vec.push(swap_csv);
-                        continue;
+            let swap_maybe = match (on_swap_maybe, on_join_pool_maybe, on_exit_pool_maybe) {
+                (Some((swap_in, swap_out)), None, None) => {
+                    match process_on_swap_trace(
+                        &state_by_sub_path,
+                        sub_trace_address,
+                        swap_in,
+                        swap_out,
+                    ) {
+                        Ok(Some(swap)) => {
+                            debug!("onSwap() => {:?}", swap);
+                            Some(swap)
+                        }
+                        Err(e) => {
+                            self.log_processing_failed(&localized_trace, &tx_hash).await;
+                            bail!("Failed to process onSwap trace\n{:?}", e);
+                        }
+                        Ok(None) => None,
                     }
-                    Err(e) => {
-                        self.log_processing_failed(&localized_trace, &tx_hash).await;
-                        bail!("Failed to process onSwap trace\n{:?}", e);
-                    }
-                    Ok(None) => {}
                 }
-            }
-
-            if let Some((join_pool_in, join_pool_out)) = join_pool_maybe {
-                match process_on_join_pool_trace(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    join_pool_in,
-                    join_pool_out,
-                ) {
-                    Ok(Some(swap)) => {
-                        let swap_csv = SwapCsv {
-                            is_buy_eure: swap.is_buy_eure,
-                            sdai_amount: swap.sdai_amount,
-                            eure_amount: swap.eure_amount,
-                            block_number,
-                            block_timestamp,
-                            tx_hash: tx_hash.to_string(),
-                            trace_path: trace_path.clone(),
-                            sdai_last_update: sdai_price_cache_info.last_update,
-                            eure_last_update: eure_price_cache_info.last_update,
-                            sdai_duration: sdai_price_cache_info.duration,
-                            eure_duration: eure_price_cache_info.duration,
-                            sdai_price_old: sdai_price_cache_info.price_old,
-                            eure_price_old: eure_price_cache_info.price_old,
-                            sdai_price_new: sdai_price_cache_info.price_new,
-                            eure_price_new: eure_price_cache_info.price_new,
-                        };
-
-                        debug!("onJoinPool() => {:?}", swap_csv);
-                        self.insert_swap_csv(swap_csv.clone())?;
-                        swap_csv_vec.push(swap_csv);
-                        continue;
+                (None, Some((join_pool_in, join_pool_out)), None) => {
+                    match process_on_join_pool_trace(
+                        &state_by_sub_path,
+                        sub_trace_address,
+                        join_pool_in,
+                        join_pool_out,
+                    ) {
+                        Ok(Some(swap)) => {
+                            debug!("onJoinPool() => {:?}", swap);
+                            Some(swap)
+                        }
+                        Err(e) => {
+                            self.log_processing_failed(&localized_trace, &tx_hash).await;
+                            bail!("Failed to process onJoinPool trace\n{:?}", e);
+                        }
+                        Ok(None) => None,
                     }
-                    Err(e) => {
-                        self.log_processing_failed(&localized_trace, &tx_hash).await;
-                        bail!("Failed to process onJoinPool trace\n{:?}", e);
-                    }
-                    Ok(None) => {}
                 }
-            }
-            if let Some((exit_pool_in, exit_pool_out)) = exit_pool_maybe {
-                match process_on_exit_pool_trace(
-                    &state_by_sub_path,
-                    sub_trace_address,
-                    exit_pool_in,
-                    exit_pool_out,
-                ) {
-                    Ok(Some(swap)) => {
-                        let swap_csv = SwapCsv {
-                            is_buy_eure: swap.is_buy_eure,
-                            sdai_amount: swap.sdai_amount,
-                            eure_amount: swap.eure_amount,
-                            block_number,
-                            block_timestamp,
-                            tx_hash: tx_hash.to_string(),
-                            trace_path: trace_path.clone(),
-                            sdai_last_update: sdai_price_cache_info.last_update,
-                            eure_last_update: eure_price_cache_info.last_update,
-                            sdai_duration: sdai_price_cache_info.duration,
-                            eure_duration: eure_price_cache_info.duration,
-                            sdai_price_old: sdai_price_cache_info.price_old,
-                            eure_price_old: eure_price_cache_info.price_old,
-                            sdai_price_new: sdai_price_cache_info.price_new,
-                            eure_price_new: eure_price_cache_info.price_new,
-                        };
-
-                        debug!("onExitPool() => {:?}", swap_csv);
-                        self.insert_swap_csv(swap_csv.clone())?;
-                        swap_csv_vec.push(swap_csv);
-                        continue;
+                (None, None, Some((exit_pool_in, exit_pool_out))) => {
+                    match process_on_exit_pool_trace(
+                        &state_by_sub_path,
+                        sub_trace_address,
+                        exit_pool_in,
+                        exit_pool_out,
+                    ) {
+                        Ok(Some(swap)) => {
+                            debug!("onExitPool() => {:?}", swap);
+                            Some(swap)
+                        }
+                        Err(e) => {
+                            self.log_processing_failed(&localized_trace, &tx_hash).await;
+                            bail!("Failed to process onExitPool trace\n{:?}", e);
+                        }
+                        Ok(None) => None,
                     }
-                    Err(e) => {
-                        self.log_processing_failed(&localized_trace, &tx_hash).await;
-                        bail!("Failed to process onExitPool trace\n{:?}", e);
-                    }
-                    Ok(None) => {}
                 }
+                (None, None, None) => None,
+                _ => bail!("onSwap(), onJoinPool() and onExitPool() are mutually exclusive"),
+            };
+
+            if let Some(swap) = swap_maybe {
+                let swap_csv = SwapCsv {
+                    is_buy_eure: swap.is_buy_eure,
+                    sdai_amount: swap.sdai_amount,
+                    eure_amount: swap.eure_amount,
+                    block_number,
+                    block_timestamp,
+                    tx_hash: tx_hash.to_string(),
+                    trace_path: trace_path.clone(),
+                    sdai_last_update: sdai_price_cache_info.last_update,
+                    eure_last_update: eure_price_cache_info.last_update,
+                    sdai_duration: sdai_price_cache_info.duration,
+                    eure_duration: eure_price_cache_info.duration,
+                    sdai_price_old: sdai_price_cache_info.price_old,
+                    eure_price_old: eure_price_cache_info.price_old,
+                    sdai_price_new: sdai_price_cache_info.price_new,
+                    eure_price_new: eure_price_cache_info.price_new,
+                };
+                self.insert_swap_csv(swap_csv.clone())?;
+                swap_csv_vec.push(swap_csv);
             }
         }
 
