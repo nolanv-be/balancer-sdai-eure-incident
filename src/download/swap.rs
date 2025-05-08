@@ -48,6 +48,14 @@ pub struct SwapCsv {
     pub block_timestamp: u64,
     pub tx_hash: String,
     pub trace_path: String,
+    pub sdai_last_update: u64,
+    pub eure_last_update: u64,
+    pub sdai_duration: u64,
+    pub eure_duration: u64,
+    pub sdai_price_old: String,
+    pub eure_price_old: String,
+    pub sdai_price_new: String,
+    pub eure_price_new: String,
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
@@ -170,6 +178,9 @@ impl SwapFetcher {
                 .fetch_state_by_sub_path(&localized_trace, &tx_hash)
                 .await?;
 
+            let (sdai_price_cache_info, eure_price_cache_info) =
+                extract_price_cache_info_sdai_eure(&state_by_sub_path, sub_trace_address)?;
+
             if let Some((swap_in, swap_out)) = swap_maybe {
                 match process_on_swap_trace(
                     &state_by_sub_path,
@@ -186,6 +197,14 @@ impl SwapFetcher {
                             block_timestamp,
                             tx_hash: tx_hash.to_string(),
                             trace_path: trace_path.clone(),
+                            sdai_last_update: sdai_price_cache_info.last_update,
+                            eure_last_update: eure_price_cache_info.last_update,
+                            sdai_duration: sdai_price_cache_info.duration,
+                            eure_duration: eure_price_cache_info.duration,
+                            sdai_price_old: sdai_price_cache_info.price_old,
+                            eure_price_old: eure_price_cache_info.price_old,
+                            sdai_price_new: sdai_price_cache_info.price_new,
+                            eure_price_new: eure_price_cache_info.price_new,
                         };
 
                         debug!("onSwap() => {:?}", swap_csv);
@@ -217,6 +236,14 @@ impl SwapFetcher {
                             block_timestamp,
                             tx_hash: tx_hash.to_string(),
                             trace_path: trace_path.clone(),
+                            sdai_last_update: sdai_price_cache_info.last_update,
+                            eure_last_update: eure_price_cache_info.last_update,
+                            sdai_duration: sdai_price_cache_info.duration,
+                            eure_duration: eure_price_cache_info.duration,
+                            sdai_price_old: sdai_price_cache_info.price_old,
+                            eure_price_old: eure_price_cache_info.price_old,
+                            sdai_price_new: sdai_price_cache_info.price_new,
+                            eure_price_new: eure_price_cache_info.price_new,
                         };
 
                         debug!("onJoinPool() => {:?}", swap_csv);
@@ -247,6 +274,14 @@ impl SwapFetcher {
                             block_timestamp,
                             tx_hash: tx_hash.to_string(),
                             trace_path: trace_path.clone(),
+                            sdai_last_update: sdai_price_cache_info.last_update,
+                            eure_last_update: eure_price_cache_info.last_update,
+                            sdai_duration: sdai_price_cache_info.duration,
+                            eure_duration: eure_price_cache_info.duration,
+                            sdai_price_old: sdai_price_cache_info.price_old,
+                            eure_price_old: eure_price_cache_info.price_old,
+                            sdai_price_new: sdai_price_cache_info.price_new,
+                            eure_price_new: eure_price_cache_info.price_new,
                         };
 
                         debug!("onExitPool() => {:?}", swap_csv);
@@ -412,11 +447,12 @@ pub fn compute_sdai_eure_from_bpt(
     Ok((bpt_hold_sdai, bpt_hold_eure))
 }
 
+#[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct PriceCacheInfo {
     pub last_update: u64,
     pub duration: u64,
-    pub price_old: U256,
-    pub price_new: U256,
+    pub price_old: String,
+    pub price_new: String,
 }
 impl TryFrom<B256> for PriceCacheInfo {
     type Error = eyre::Error;
@@ -452,48 +488,44 @@ impl TryFrom<B256> for PriceCacheInfo {
         Ok(PriceCacheInfo {
             last_update,
             duration,
-            price_old,
-            price_new,
+            price_old: price_old.to_string(),
+            price_new: price_new.to_string(),
         })
     }
 }
 pub fn extract_price_cache_info_sdai_eure(
     state_by_sub_path: &StateBySubPath,
+    sub_trace_address: &[usize],
 ) -> Result<(PriceCacheInfo, PriceCacheInfo)> {
     const SDAI_PRICE_CACHE_KEY: B256 =
         b256!("13da86008ba1c6922daee3e07db95305ef49ebced9f5467a0b8613fcc6b343e3");
     const EURE_PRICE_CACHE_KEY: B256 =
         b256!("bbc70db1b6c7afd11e79c0fb0051300458f1a3acb8ee9789d9b6b26c61ad9bc7");
-    const SUB_PATH: &[usize] = &[1];
 
     let sdai_price_cache = state_by_sub_path
-        .get_load_value(&SDAI_PRICE_CACHE_KEY, SUB_PATH, &Position::Last)
+        .get_load_value(&SDAI_PRICE_CACHE_KEY, sub_trace_address, &Position::Last)
         .ok_or_else(|| {
             eyre::eyre!(
                 "Failed to get sDAI price cache for trace_address {:?} in this position {:?}",
-                SUB_PATH,
+                sub_trace_address,
                 &Position::Last
             )
         })?;
     let eure_price_cache = state_by_sub_path
-        .get_load_value(&EURE_PRICE_CACHE_KEY, SUB_PATH, &Position::Last)
+        .get_load_value(&EURE_PRICE_CACHE_KEY, sub_trace_address, &Position::Last)
         .ok_or_else(|| {
             eyre::eyre!(
                 "Failed to get EURe price cache for trace_address {:?} in this position {:?}",
-                SUB_PATH,
+                sub_trace_address,
                 &Position::Last
             )
         })?;
-    debug!("state_by_sub_path: {:#?}", state_by_sub_path);
 
     Ok((
         PriceCacheInfo::try_from(sdai_price_cache)?,
         PriceCacheInfo::try_from(eure_price_cache)?,
     ))
 }
-
-// TODO need test => 0x1fcd65e2d840b13af7bdef65128452ff14a942d525663e7e166fa64e4efcc919
-//[2025-05-07T14:13:10Z DEBUG balancer_sdai_eure_incident::download::swap] onJoinPool() => SwapCsv { is_buy_eure: true, sdai_amount: "271901145992645227831", eure_amount: "73787581747842212270", block_number: 30517858, block_timestamp: 1697628530, tx_hash: "0x1fcd65e2d840b13af7bdef65128452ff14a942d525663e7e166fa64e4efcc919", trace_path: "1" }
 
 /*#[cfg(test)]
 mod tests {

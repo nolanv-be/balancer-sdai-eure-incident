@@ -88,6 +88,18 @@ fn compute_join_pool_exact_asset_to_bpt(
         ._0
         .get(EURE_ARRAY_INDEX)
         .ok_or_eyre("EURe amount sent to the pool not found")?;
+    let sdai_pool_balance = join_pool_in
+        .balances
+        .get(SDAI_ARRAY_INDEX)
+        .ok_or_eyre("sDAI not found in pool balances")?
+        .checked_add(*sdai_sent)
+        .ok_or_eyre("Failed to add sDAI sent to the pool")?;
+    let eure_pool_balance = join_pool_in
+        .balances
+        .get(EURE_ARRAY_INDEX)
+        .ok_or_eyre("EURe not found in pool balances")?
+        .checked_add(*sdai_sent)
+        .ok_or_eyre("Failed to add EURe sent to the pool")?;
     let balance_recipient_key = {
         let mut key = B256::left_padding_from(&join_pool_in.recipient.0.0).to_vec();
         key.extend_from_slice(&B256::ZERO.0);
@@ -111,7 +123,7 @@ fn compute_join_pool_exact_asset_to_bpt(
         sub_trace_address,
         bpt_received,
         is_bpt_mint,
-        &join_pool_in.balances,
+        &vec![sdai_pool_balance, eure_pool_balance],
     )
     .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
