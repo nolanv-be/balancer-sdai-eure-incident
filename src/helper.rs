@@ -1,5 +1,5 @@
 use crate::download::ProviderFiller;
-use alloy::primitives::{B256, Bytes, TxHash, U256};
+use alloy::primitives::{B256, Bytes, TxHash, U256, b256};
 use alloy::providers::ext::TraceApi;
 use alloy::rpc::types::trace::parity::{VmInstruction, VmTrace};
 use alloy::sol_types::private::u256;
@@ -82,17 +82,56 @@ pub async fn fetch_sub_vm_trace(
     extract_sub_vm_trace(vm_trace, trace_address)
 }
 pub fn extract_sub_vm_trace(mut vm_trace: VmTrace, trace_address: &[usize]) -> Result<VmTrace> {
-    for sub_trace_to_take in trace_address.iter() {
-        vm_trace = vm_trace
-            .ops
-            .into_iter()
-            .filter_map(|op| op.sub)
-            .filter(|trace| !trace.ops.is_empty())
-            .nth(*sub_trace_to_take)
-            .ok_or_else(|| eyre::eyre!("trace_address is out of bounds"))?;
+    if trace_address.is_empty() {
+        return Ok(vm_trace);
+    }
+    for mut sub_trace_to_take in trace_address.iter().cloned() {
+        for (position, instruction) in vm_trace.ops.iter().enumerate() {
+            let Some(sub) = instruction.sub.as_ref() else {
+                continue;
+            };
+
+            if sub.ops.is_empty() && !is_console_static_call(&vm_trace, position)? {
+                continue;
+            }
+
+            if sub_trace_to_take == 0 {
+                vm_trace = sub.clone();
+                break;
+            }
+
+            sub_trace_to_take -= 1;
+        }
+
+        if sub_trace_to_take != 0 {
+            return Err(eyre::eyre!("trace_address is out of bounds"));
+        }
     }
 
     Ok(vm_trace)
+}
+
+fn is_console_static_call(vm_trace: &VmTrace, static_call_position: usize) -> Result<bool> {
+    let console_address = b256!("000000000000000000000000000000000000000000636F6e736F6c652e6c6f67");
+
+    let vm_trace_before_static_call = vm_trace
+        .ops
+        .get(0..static_call_position)
+        .ok_or_eyre("Failed to get instruction for check is console static call")?;
+
+    for instruction in vm_trace_before_static_call.iter().rev() {
+        if instruction.sub.is_some() {
+            break;
+        }
+        let Some(ex) = instruction.ex.as_ref() else {
+            continue;
+        };
+        if ex.push.iter().any(|p| p.to_be_bytes() == console_address) {
+            return Ok(true);
+        }
+    }
+
+    Ok(false)
 }
 
 #[derive(Debug)]
