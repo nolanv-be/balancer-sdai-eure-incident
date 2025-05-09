@@ -199,6 +199,7 @@ impl SwapFetcher {
                             Some(swap)
                         }
                         Err(e) => {
+                            let _ = self.flush();
                             self.log_processing_failed(&localized_trace, &tx_hash).await;
                             bail!("Failed to process onSwap trace\n{:?}", e);
                         }
@@ -217,6 +218,7 @@ impl SwapFetcher {
                             Some(swap)
                         }
                         Err(e) => {
+                            let _ = self.flush();
                             self.log_processing_failed(&localized_trace, &tx_hash).await;
                             bail!("Failed to process onJoinPool trace\n{:?}", e);
                         }
@@ -235,6 +237,7 @@ impl SwapFetcher {
                             Some(swap)
                         }
                         Err(e) => {
+                            let _ = self.flush();
                             self.log_processing_failed(&localized_trace, &tx_hash).await;
                             bail!("Failed to process onExitPool trace\n{:?}", e);
                         }

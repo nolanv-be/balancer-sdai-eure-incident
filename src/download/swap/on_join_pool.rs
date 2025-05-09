@@ -98,7 +98,7 @@ fn compute_join_pool_exact_asset_to_bpt(
         .balances
         .get(EURE_ARRAY_INDEX)
         .ok_or_eyre("EURe not found in pool balances")?
-        .checked_add(*sdai_sent)
+        .checked_add(*eure_sent)
         .ok_or_eyre("Failed to add EURe sent to the pool")?;
     let balance_recipient_key = {
         let mut key = B256::left_padding_from(&join_pool_in.recipient.0.0).to_vec();
