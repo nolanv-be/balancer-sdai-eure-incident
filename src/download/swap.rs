@@ -64,7 +64,6 @@ pub struct Swap {
     pub is_buy_eure: bool,
     pub sdai_amount: String,
     pub eure_amount: String,
-    pub swap_fee_percentage: String,
 }
 
 impl SwapFetcher {
@@ -185,6 +184,8 @@ impl SwapFetcher {
 
             let (sdai_price_cache_info, eure_price_cache_info) =
                 extract_price_cache_info_sdai_eure(&state_by_sub_path, sub_trace_address)?;
+            let swap_fee_percentage =
+                extract_swap_fee(&state_by_sub_path, sub_trace_address)?.to_string();
 
             let swap_maybe = match (on_swap_maybe, on_join_pool_maybe, on_exit_pool_maybe) {
                 (Some((swap_in, swap_out)), None, None) => {
@@ -265,7 +266,7 @@ impl SwapFetcher {
                     eure_price_old: eure_price_cache_info.price_old,
                     sdai_price_new: sdai_price_cache_info.price_new,
                     eure_price_new: eure_price_cache_info.price_new,
-                    swap_fee_percentage: swap.swap_fee_percentage,
+                    swap_fee_percentage,
                 };
                 self.insert_swap_csv(swap_csv.clone())?;
                 swap_csv_vec.push(swap_csv);
@@ -499,6 +500,32 @@ pub fn extract_price_cache_info_sdai_eure(
         PriceCacheInfo::try_from(sdai_price_cache)?,
         PriceCacheInfo::try_from(eure_price_cache)?,
     ))
+}
+
+pub fn extract_swap_fee(
+    state_by_sub_path: &StateBySubPath,
+    sub_trace_address: &[usize],
+) -> Result<U256> {
+    const SWAP_FEE_PERCENTAGE_KEY: B256 =
+        b256!("0000000000000000000000000000000000000000000000000000000000000008");
+
+    let Some(swap_fee_percentage_value) = state_by_sub_path.get_load_value(
+        &SWAP_FEE_PERCENTAGE_KEY,
+        sub_trace_address,
+        &Position::Last,
+    ) else {
+        debug!("Swap fee percentage not found in storage, should be join/exit without \"swap\"");
+        return Ok(U256::ZERO);
+    };
+
+    let swap_fee_percentage = U256::try_from_be_slice(
+        swap_fee_percentage_value
+            .get(0..8)
+            .ok_or_eyre("Failed to get swap_fee_percentage in storage value")?,
+    )
+    .ok_or_eyre("Failed to convert swap_fee_percentage to u256")?;
+
+    Ok(swap_fee_percentage)
 }
 
 /*#[cfg(test)]

@@ -149,7 +149,6 @@ fn compute_join_pool_exact_asset_to_bpt(
                 is_buy_eure: true,
                 sdai_amount: sdai_swap.to_string(),
                 eure_amount: eure_swap.to_string(),
-                swap_fee_percentage: join_pool_in.protocolSwapFeePercentage.to_string(),
             }))
         }
         std::cmp::Ordering::Less => {
@@ -165,7 +164,6 @@ fn compute_join_pool_exact_asset_to_bpt(
                 is_buy_eure: false,
                 sdai_amount: sdai_swap.to_string(),
                 eure_amount: eure_swap.to_string(),
-                swap_fee_percentage: join_pool_in.protocolSwapFeePercentage.to_string(),
             }))
         }
     }
