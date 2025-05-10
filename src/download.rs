@@ -3,6 +3,7 @@ mod swap;
 
 use crate::download::block_timestamp::{BlockTimestampFetcher, TryIntoBlockTimestamp};
 use crate::download::swap::SwapFetcher;
+use alloy::primitives::BlockNumber;
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
 };
@@ -15,8 +16,7 @@ use log::info;
 const MAX_RETRY: u32 = 10;
 const BACKOFF: u64 = 1000;
 const CUPS: u64 = 10_000;
-const SDAI_EURE_POOL_CREATION_BLOCK: u64 = 30_274_134;
-const STEP: usize = 100_000;
+const STEP: usize = 5_000;
 
 pub type ProviderFiller = FillProvider<
     JoinFill<
@@ -27,7 +27,7 @@ pub type ProviderFiller = FillProvider<
 >;
 
 // TODO Add spot price for EUR/USD, maybe add price_rate infos
-pub async fn start(rpc_url: &str) -> Result<()> {
+pub async fn start(rpc_url: &str, start_block_download: BlockNumber) -> Result<()> {
     info!("Downloading data from rpc...");
 
     let client = RpcClient::builder()
@@ -40,7 +40,7 @@ pub async fn start(rpc_url: &str) -> Result<()> {
 
     let latest_block = provider.get_block_number().await?;
 
-    for current_block in (SDAI_EURE_POOL_CREATION_BLOCK..=latest_block).step_by(STEP) {
+    for current_block in (start_block_download..=latest_block).step_by(STEP) {
         let current_block_timestamp = current_block
             .try_into_block_timestamp(&mut swap_fetcher.block_timestamp_fetcher)
             .await?;
