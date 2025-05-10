@@ -1,6 +1,6 @@
 use crate::download::swap::{EURE_ARRAY_INDEX, SDAI_ARRAY_INDEX, Swap, compute_sdai_eure_from_bpt};
-use crate::helper::StateBySubPath;
-use alloy::primitives::U256;
+use crate::helper::{Position, StateBySubPath};
+use alloy::primitives::{B256, U256, keccak256};
 use alloy::rpc::types::trace::parity::{CallAction, TraceOutput};
 use alloy::sol;
 use alloy::sol_types::SolCall;
@@ -63,9 +63,12 @@ pub fn process_on_exit_pool_trace(
             &exit_pool_in,
             &exit_pool_out,
         ),
-        ExitKind::BptInForExactTokensOut => {
-            Err(eyre!("BptInForExactTokensOut not implemented yet"))
-        }
+        ExitKind::BptInForExactTokensOut => compute_exit_pool_bpt_to_exact_assets(
+            state_by_sub_path,
+            sub_trace_address,
+            &exit_pool_in,
+            &exit_pool_out,
+        ),
         ExitKind::ExactBptInForAllTokensOut => {
             debug!("Skip exit pool to all token, no swap done");
             Ok(None)
@@ -132,5 +135,108 @@ fn compute_exit_pool_exact_bpt_to_one_asset(
             }))
         }
         _ => Err(eyre!("Unknown asset received")),
+    }
+}
+
+fn compute_exit_pool_bpt_to_exact_assets(
+    state_by_sub_path: &StateBySubPath,
+    sub_trace_address: &[usize],
+    exit_pool_in: &onExitPoolCall,
+    _: &onExitPoolReturn,
+) -> Result<Option<Swap>> {
+    let is_bpt_mint = false;
+    let balance_sender_key = {
+        let mut key = B256::left_padding_from(&exit_pool_in.sender.0.0).to_vec();
+        key.extend_from_slice(&B256::ZERO.0);
+        keccak256(key)
+    };
+    let bpt_owned_before: U256 = state_by_sub_path
+        .get_load_value(&balance_sender_key, sub_trace_address, &Position::First)
+        .ok_or_eyre("BPT owned before not found")?
+        .into();
+    let bpt_owned_after: U256 = state_by_sub_path
+        .get_store_value(&balance_sender_key, sub_trace_address, &Position::First)
+        .ok_or_eyre("BPT owned after not found")?
+        .into();
+    let bpt_burned = bpt_owned_before
+        .checked_sub(bpt_owned_after)
+        .ok_or_eyre("BPT owned increased after a onExitPool")?;
+
+    let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
+        state_by_sub_path,
+        sub_trace_address,
+        bpt_burned,
+        is_bpt_mint,
+        &exit_pool_in.balances,
+    )
+    .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
+
+    let sdai_received: U256 = U256::try_from_be_slice(
+        exit_pool_in
+            .userData
+            .get(128..160)
+            .ok_or_eyre("sdai received not found in userData")?,
+    )
+    .ok_or_eyre("sdai received cant be convert to U256")?;
+    let eure_received: U256 = U256::try_from_be_slice(
+        exit_pool_in
+            .userData
+            .get(160..192)
+            .ok_or_eyre("eure received not found in userData")?,
+    )
+    .ok_or_eyre("eure received sent cant be convert to U256")?;
+
+    match (sdai_received, eure_received) {
+        (sdai_received, U256::ZERO) => {
+            let sdai_swapped_from_bpt = sdai_received.checked_sub(sdai_from_bpt).ok_or_eyre(
+                "BPT => sDAI, but sDAI received is less then the amount from BPT ownership",
+            )?;
+
+            Ok(Some(Swap {
+                is_buy_eure: false,
+                sdai_amount: sdai_swapped_from_bpt.to_string(),
+                eure_amount: eure_from_bpt.to_string(),
+            }))
+        }
+        (U256::ZERO, eure_received) => {
+            let eure_swapped_from_bpt = eure_received.checked_sub(eure_from_bpt).ok_or_eyre(
+                "BPT => EURe, but EURe received is less then the amount from BPT ownership",
+            )?;
+
+            Ok(Some(Swap {
+                is_buy_eure: true,
+                sdai_amount: sdai_from_bpt.to_string(),
+                eure_amount: eure_swapped_from_bpt.to_string(),
+            }))
+        }
+        (sdai_received, eure_received) if sdai_received >= sdai_from_bpt => {
+            let sdai_swapped_from_bpt = sdai_received.checked_sub(sdai_from_bpt).ok_or_eyre(
+                "BPT => +sDAI| -EURe, but sDAI received is less then the amount from BPT ownership",
+            )?;
+            let eure_swapped_from_bpt = eure_from_bpt.checked_sub(eure_received).ok_or_eyre(
+                "BPT => +sDAI| -EURe, but EURe received is bigger then the amount from BPT ownership",
+            )?;
+
+            Ok(Some(Swap {
+                is_buy_eure: false,
+                sdai_amount: sdai_swapped_from_bpt.to_string(),
+                eure_amount: eure_swapped_from_bpt.to_string(),
+            }))
+        }
+        (sdai_received, eure_received) if sdai_received < sdai_from_bpt => {
+            let sdai_swapped_from_bpt = sdai_from_bpt.checked_sub(sdai_received).ok_or_eyre(
+                "BPT => -sDAI| +EURe, but sDAI received is bigger then the amount from BPT ownership",
+            )?;
+            let eure_swapped_from_bpt = eure_received.checked_sub(eure_from_bpt).ok_or_eyre(
+                "BPT => -sDAI| +EURe, but EURe received is less then the amount from BPT ownership",
+            )?;
+
+            Ok(Some(Swap {
+                is_buy_eure: true,
+                sdai_amount: sdai_swapped_from_bpt.to_string(),
+                eure_amount: eure_swapped_from_bpt.to_string(),
+            }))
+        }
+        _ => Err(eyre!("Unknown assets received")),
     }
 }
