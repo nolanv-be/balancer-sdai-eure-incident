@@ -1,5 +1,6 @@
 mod download;
 pub mod helper;
+mod process;
 
 use clap::Parser;
 use eyre::Result;
@@ -13,7 +14,7 @@ struct Args {
     rpc_url: Option<String>,
 
     /// The starting block for downloading
-    #[arg(short, long, default_value = "30_274_134")]
+    #[arg(short, long, default_value = "30274134")]
     start_block_download: u64,
 }
 
@@ -25,6 +26,7 @@ async fn main() -> Result<()> {
     if let Some(rpc_url) = args.rpc_url {
         download::start(&rpc_url, args.start_block_download).await?;
     }
+    process::start()?;
 
     Ok(())
 }
