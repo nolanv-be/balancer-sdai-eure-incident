@@ -6,7 +6,7 @@ use crate::download::block_timestamp::TryIntoBlockTimestamp;
 use crate::download::swap::on_exit_pool::{decode_in_out_on_exit_pool, process_on_exit_pool_trace};
 use crate::download::swap::on_join_pool::{decode_in_out_on_join_pool, process_on_join_pool_trace};
 use crate::download::swap::on_swap::{decode_in_out_on_swap, process_on_swap_trace};
-use crate::download::{ProviderFiller, block_timestamp::BlockTimestampFetcher};
+use crate::download::{ProviderFiller, STEP, block_timestamp::BlockTimestampFetcher};
 use crate::helper::{
     DivUp, MulUp, Position, StateBySubPath, StringifyArrayUsize, extract_sub_vm_trace,
     fetch_sub_vm_trace, save_trace_to_file,
@@ -31,6 +31,43 @@ const SDAI_ARRAY_INDEX: usize = 0;
 const EURE_ADDRESS: Address = address!("cB444e90D8198415266c6a2724b7900fb12FC56E");
 const EURE_ARRAY_INDEX: usize = 1;
 const SWAPS_CSV_FILE: &str = "data/swaps.csv";
+
+pub async fn start(
+    provider: ProviderFiller,
+    block_timestamp_fetcher: BlockTimestampFetcher,
+    start_block_download: BlockNumber,
+) -> Result<()> {
+    info!("Downloading swap data from rpc...");
+    let mut swap_fetcher = SwapFetcher::try_new(provider.clone(), block_timestamp_fetcher)?;
+
+    let latest_block = provider.get_block_number().await?;
+
+    for current_block in (start_block_download..=latest_block).step_by(STEP) {
+        let current_block_timestamp = current_block
+            .try_into_block_timestamp(&mut swap_fetcher.block_timestamp_fetcher)
+            .await?;
+        info!(
+            "Downloading swap for block [{}/{}] ({})",
+            current_block,
+            latest_block,
+            chrono::DateTime::<chrono::Utc>::from_timestamp(current_block_timestamp as i64, 0)
+                .unwrap()
+                .to_rfc3339()
+        );
+
+        swap_fetcher
+            .fetch_swap_csv(
+                current_block,
+                current_block.saturating_add(STEP.saturating_sub(1) as u64),
+            )
+            .await?;
+
+        swap_fetcher.flush()?
+    }
+
+    info!("Downloading swap data from rpc done.");
+    Ok(())
+}
 
 pub struct SwapFetcher {
     pub csv_writer: csv::Writer<std::fs::File>,

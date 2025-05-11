@@ -3,6 +3,10 @@ use eyre::Result;
 
 mod sma_eur_usdt;
 
-pub fn start() -> Result<()> {
-    generate_sma_eur_usdt_csv()
+pub fn start(is_process_sma: bool) -> Result<()> {
+    if is_process_sma {
+        generate_sma_eur_usdt_csv()?
+    }
+
+    Ok(())
 }
