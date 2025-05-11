@@ -1,5 +1,5 @@
 use crate::download::ProviderFiller;
-use alloy::primitives::{B256, Bytes, TxHash, U256, b256};
+use alloy::primitives::{B256, Bytes, TxHash, U256};
 use alloy::providers::ext::TraceApi;
 use alloy::rpc::types::trace::parity::{VmInstruction, VmTrace};
 use alloy::sol_types::private::u256;
@@ -91,7 +91,7 @@ pub fn extract_sub_vm_trace(mut vm_trace: VmTrace, trace_address: &[usize]) -> R
                 continue;
             };
 
-            if sub.ops.is_empty() && !is_console_static_call(&vm_trace, position)? {
+            if sub.ops.is_empty() && is_precompiled(&vm_trace, position)? {
                 continue;
             }
 
@@ -111,23 +111,41 @@ pub fn extract_sub_vm_trace(mut vm_trace: VmTrace, trace_address: &[usize]) -> R
     Ok(vm_trace)
 }
 
-fn is_console_static_call(vm_trace: &VmTrace, static_call_position: usize) -> Result<bool> {
-    let console_address = b256!("000000000000000000000000000000000000000000636F6e736F6c652e6c6f67");
+fn is_precompiled(vm_trace: &VmTrace, call_position: usize) -> Result<bool> {
+    const first_precompiled_address: U256 = u256(1);
+    const last_precompiled_address: U256 = u256(10);
 
-    let vm_trace_before_static_call = vm_trace
+    let vm_trace_before_call = vm_trace
         .ops
-        .get(0..static_call_position)
-        .ok_or_eyre("Failed to get instruction for check is console static call")?;
+        .get(0..call_position)
+        .ok_or_eyre("Failed to get instructions for check if is precompiled")?;
 
-    for instruction in vm_trace_before_static_call.iter().rev() {
+    let mut is_found_gas = false;
+
+    for instruction in vm_trace_before_call.iter().rev() {
         if instruction.sub.is_some() {
             break;
         }
         let Some(ex) = instruction.ex.as_ref() else {
             continue;
         };
-        if ex.push.iter().any(|p| p.to_be_bytes() == console_address) {
+        let mut push_stack = ex.push.clone();
+
+        if !is_found_gas {
+            let Some(_) = push_stack.pop() else {
+                continue;
+            };
+            is_found_gas = true;
+        }
+
+        let Some(last_stack) = push_stack.pop() else {
+            continue;
+        };
+
+        if last_stack >= first_precompiled_address && last_stack <= last_precompiled_address {
             return Ok(true);
+        } else {
+            break;
         }
     }
 
