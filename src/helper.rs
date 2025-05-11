@@ -112,8 +112,8 @@ pub fn extract_sub_vm_trace(mut vm_trace: VmTrace, trace_address: &[usize]) -> R
 }
 
 fn is_precompiled(vm_trace: &VmTrace, call_position: usize) -> Result<bool> {
-    const first_precompiled_address: U256 = u256(1);
-    const last_precompiled_address: U256 = u256(10);
+    const FIRST_PRECOMPILED_ADDRESS: U256 = u256(1);
+    const LAST_PRECOMPILED_ADDRESS: U256 = u256(10);
 
     let vm_trace_before_call = vm_trace
         .ops
@@ -142,7 +142,7 @@ fn is_precompiled(vm_trace: &VmTrace, call_position: usize) -> Result<bool> {
             continue;
         };
 
-        if last_stack >= first_precompiled_address && last_stack <= last_precompiled_address {
+        if last_stack >= FIRST_PRECOMPILED_ADDRESS && last_stack <= LAST_PRECOMPILED_ADDRESS {
             return Ok(true);
         } else {
             break;
