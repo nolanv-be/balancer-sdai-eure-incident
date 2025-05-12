@@ -1,0 +1,13 @@
+[package]
+name = "balancer-sdai-eure-incident-app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+axum = "0.8.4"
+tower-http = { version = "0.6.2", features = ["fs"] }
+askama = "0.13.1"
+eyre = { workspace = true }
+tokio = { workspace = true }
+env_logger = { workspace = true }
+log = { workspace = true }

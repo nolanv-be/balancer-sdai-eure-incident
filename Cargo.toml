@@ -1,13 +1,11 @@
-[package]
-name = "balancer-sdai-eure-incident"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+resolver = "2"
+members = ["crates/balancer-sdai-eure-incident-app", "crates/balancer-sdai-eure-incident-data-generation"]
 
-[dependencies]
+[workspace.dependencies]
 tokio = { version = "1.44.2", features = ["full"] }
-alloy = { version = "0.15.5", features = ["provider-trace-api", "provider-debug-api"] }
 eyre = "0.6.12"
-clap = { version = "4.5.37", features = ["derive"]}
+clap = { version = "4.5.37", features = ["derive"] }
 log = "0.4.27"
 env_logger = "0.11.8"
 csv = "1.3.1"

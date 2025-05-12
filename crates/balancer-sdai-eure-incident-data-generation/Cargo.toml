@@ -1,0 +1,16 @@
+[package]
+name = "balancer-sdai-eure-incident-data-generation"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+alloy = { version = "0.15.5", features = ["provider-trace-api", "provider-debug-api"] }
+tokio = { workspace = true }
+eyre = { workspace = true }
+clap = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+csv = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
