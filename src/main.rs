@@ -25,9 +25,13 @@ struct Args {
     #[arg(long, default_value = "false")]
     download_sdai: bool,
 
-    /// Process sma EUR/USDT
+    /// Process EUR/USDT spot price from binance to generate sma EUR/USDT
     #[arg(long, default_value = "false")]
     process_sma: bool,
+
+    /// Process swap data and sma EUR/USDT to generate swap with DAI and spot price
+    #[arg(long, default_value = "false")]
+    process_swap_dai_spot: bool,
 }
 
 #[tokio::main]
@@ -45,7 +49,7 @@ async fn main() -> Result<()> {
         .await?;
     }
 
-    process::start(args.process_sma)?;
+    process::start(args.process_sma, args.process_swap_dai_spot)?;
 
     Ok(())
 }

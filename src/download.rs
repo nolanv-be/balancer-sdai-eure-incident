@@ -11,6 +11,8 @@ use alloy::providers::{Identity, ProviderBuilder, RootProvider};
 use alloy::rpc::client::RpcClient;
 use alloy::transports::layers::RetryBackoffLayer;
 use eyre::Result;
+pub use sdai_price::SdaiCsv;
+pub use swap::SwapCsv;
 
 const MAX_RETRY: u32 = 10;
 const BACKOFF: u64 = 1000;
@@ -37,7 +39,7 @@ pub async fn start(
     let provider = ProviderBuilder::new().connect_client(client);
 
     if is_download_swap {
-        swap::start(
+        swap::download_swap(
             provider.clone(),
             BlockTimestampFetcher::try_new(provider.clone())?,
             start_block_download,
@@ -46,7 +48,7 @@ pub async fn start(
     }
 
     if is_download_sdai {
-        sdai_price::start(
+        sdai_price::download_sdai_price(
             provider.clone(),
             BlockTimestampFetcher::try_new(provider.clone())?,
             start_block_download,

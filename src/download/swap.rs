@@ -32,7 +32,7 @@ const EURE_ADDRESS: Address = address!("cB444e90D8198415266c6a2724b7900fb12FC56E
 const EURE_ARRAY_INDEX: usize = 1;
 const SWAPS_CSV_FILE: &str = "data/swaps.csv";
 
-pub async fn start(
+pub async fn download_swap(
     provider: ProviderFiller,
     block_timestamp_fetcher: BlockTimestampFetcher,
     start_block_download: BlockNumber,
@@ -565,53 +565,19 @@ pub fn extract_swap_fee(
     Ok(swap_fee_percentage)
 }
 
-/*#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::download::{BACKOFF, CUPS, MAX_RETRY};
-    use alloy::providers::ProviderBuilder;
-    use alloy::rpc::client::RpcClient;
-    use alloy::transports::layers::RetryBackoffLayer;
+impl SwapCsv {
+    pub fn load() -> Result<Vec<Self>> {
+        let mut csv_reader =
+            csv::Reader::from_path(SWAPS_CSV_FILE).wrap_err("Error reading swap csv file")?;
 
-    #[tokio::test]
-    async fn test_process_on_swap_trace() {
-        env_logger::init();
+        let mut swaps: Vec<SwapCsv> = csv_reader
+            .deserialize::<SwapCsv>()
+            .collect::<Result<Vec<_>, _>>()?;
 
-        let rpc_url = std::env::var("RPC_URL").unwrap();
+        swaps.sort_by(|a, b| a.block_timestamp.cmp(&b.block_timestamp));
 
-        let client = RpcClient::builder()
-            .layer(RetryBackoffLayer::new(MAX_RETRY, BACKOFF, CUPS))
-            .http(rpc_url.parse().unwrap());
-        let provider = ProviderBuilder::new().connect_client(client);
+        info!("Reading swaps file done.({})", swaps.len());
 
-        let mut block_timestamp_fetcher = BlockTimestampFetcher::try_new(provider.clone()).unwrap();
-
-        let result_aura_multiple_swap = fetch_swap_csv(
-            &provider,
-            &mut block_timestamp_fetcher,
-            BlockNumber::from(30649625u64),
-            0,
-        )
-        .await;
-
-        assert!(result_aura_multiple_swap.is_ok());
-
-        let result_staticcall_eoa = fetch_swap_csv(
-            &provider,
-            &mut block_timestamp_fetcher,
-            BlockNumber::from(30629227u64),
-            0,
-        )
-        .await;
-        assert!(result_staticcall_eoa.is_ok());
-
-        let result_swap_join_in_out = fetch_swap_csv(
-            &provider,
-            &mut block_timestamp_fetcher,
-            BlockNumber::from(30615088u64),
-            0,
-        )
-        .await;
-        assert!(result_swap_join_in_out.is_ok());
+        Ok(swaps)
     }
-}*/
+}

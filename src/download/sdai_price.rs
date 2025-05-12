@@ -4,13 +4,14 @@ use alloy::primitives::{Address, BlockNumber, U256, address};
 use alloy::providers::Provider;
 use alloy::sol;
 use alloy::sol_types::private::u256;
+use eyre::{Context, Result};
 use log::info;
 use std::fs::OpenOptions;
 
 const SDAI_PRICE_CSV_FILE: &str = "data/sdai_price.csv";
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-struct SdaiCsv {
+pub struct SdaiCsv {
     pub block_timestamp: u64,
     pub price: String,
 }
@@ -23,11 +24,11 @@ sol!(
     }
 );
 
-pub async fn start(
+pub async fn download_sdai_price(
     provider: ProviderFiller,
     mut block_timestamp_fetcher: BlockTimestampFetcher,
     start_block_download: BlockNumber,
-) -> eyre::Result<()> {
+) -> Result<()> {
     info!("Downloading sdai price from rpc...");
 
     const SDAI_ADDRESS: Address = address!("af204776c7245bF4147c2612BF6e5972Ee483701");
@@ -74,4 +75,21 @@ pub async fn start(
 
     info!("Downloading sdai price from rpc done.");
     Ok(())
+}
+
+impl SdaiCsv {
+    pub fn load() -> Result<Vec<Self>> {
+        let mut csv_reader = csv::Reader::from_path(SDAI_PRICE_CSV_FILE)
+            .wrap_err("Error reading sDAI price csv file")?;
+
+        let mut sdai_prices: Vec<SdaiCsv> = csv_reader
+            .deserialize::<SdaiCsv>()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        sdai_prices.sort_by(|a, b| a.block_timestamp.cmp(&b.block_timestamp));
+
+        info!("Reading sDAI price file done.({})", sdai_prices.len());
+
+        Ok(sdai_prices)
+    }
 }

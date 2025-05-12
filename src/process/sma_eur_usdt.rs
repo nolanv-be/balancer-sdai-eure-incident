@@ -1,6 +1,6 @@
 use alloy::primitives::U256;
 use alloy::sol_types::private::u256;
-use eyre::{OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use log::{debug, info};
 
 const SMA_LENGTH: usize = 10;
@@ -63,13 +63,13 @@ impl Kline {
 }
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
-struct SmaEurUsdtCsv {
-    timestamp: u64,
-    sma_price: String,
+pub struct SmaEurUsdtCsv {
+    pub timestamp: u64,
+    pub sma_price: String,
 }
 
 pub fn generate_sma_eur_usdt_csv() -> Result<()> {
-    info!("Generating sma-eur-usdt.csv");
+    info!("Generating csv of simple moving average of EUR/USDT...");
 
     let mut csv_writer = csv::Writer::from_path(SMA_CSV_FILE)?;
 
@@ -101,6 +101,27 @@ pub fn generate_sma_eur_usdt_csv() -> Result<()> {
     }
 
     csv_writer.flush()?;
+    info!("Generating csv of simple moving average of EUR/USDT done.");
 
     Ok(())
+}
+
+impl SmaEurUsdtCsv {
+    pub fn load() -> Result<Vec<Self>> {
+        let mut csv_reader =
+            csv::Reader::from_path(SMA_CSV_FILE).wrap_err("Error reading sma EUR/USDT csv file")?;
+
+        let mut sma_eur_usdt_vec: Vec<SmaEurUsdtCsv> = csv_reader
+            .deserialize::<SmaEurUsdtCsv>()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        sma_eur_usdt_vec.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
+
+        info!(
+            "Reading sma EUR/USDt file done.({})",
+            sma_eur_usdt_vec.len()
+        );
+
+        Ok(sma_eur_usdt_vec)
+    }
 }
