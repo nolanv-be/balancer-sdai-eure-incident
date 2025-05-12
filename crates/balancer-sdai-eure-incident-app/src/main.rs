@@ -36,11 +36,21 @@ async fn get_report() -> Result<impl IntoResponse, (StatusCode, String)> {
     #[derive(Debug, Template)]
     #[template(path = "index.html")]
     struct Tmpl {
-        message: String,
+        dates: Vec<String>,
+        losses: Vec<f64>,
+        cumulative_losses: Vec<f64>,
     }
 
     let template = Tmpl {
-        message: "Hello, world!".into(),
+        dates: vec![
+            "2022-01-01".into(),
+            "2022-01-02".into(),
+            "2022-01-03".into(),
+            "2022-01-04".into(),
+            "2022-01-05".into(),
+        ],
+        losses: vec![-0.6, -2.2, -1.1, 0.8, 0.2],
+        cumulative_losses: vec![-0.6, -2.8, -3.9, -3.1, -2.9],
     };
     Ok(Html(template.render().map_err(|_| {
         (
