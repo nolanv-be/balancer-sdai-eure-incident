@@ -1,6 +1,6 @@
 use crate::download::{SdaiCsv, SwapCsv};
 use crate::process::SmaEurUsdtCsv;
-use eyre::{OptionExt, Result};
+use eyre::{Context, OptionExt, Result};
 use log::info;
 
 const SWAP_WITH_DAI_AND_SPOT_FILE: &str = "data/swap-with-dai-and-spot.csv";
@@ -25,6 +25,25 @@ pub struct SwapWithDaiAndSpotCsv {
     pub swap_fee_percentage: String,
     pub last_sdai_price: String,
     pub last_sma_eur_usdt_price: String,
+}
+impl SwapWithDaiAndSpotCsv {
+    pub fn load() -> Result<Vec<Self>> {
+        let mut csv_reader = csv::Reader::from_path(SWAP_WITH_DAI_AND_SPOT_FILE)
+            .wrap_err("Error reading swap with DAI and spot csv file")?;
+
+        let mut swaps: Vec<SwapWithDaiAndSpotCsv> = csv_reader
+            .deserialize::<SwapWithDaiAndSpotCsv>()
+            .collect::<Result<Vec<_>, _>>()?;
+
+        swaps.sort_by(|a, b| a.block_timestamp.cmp(&b.block_timestamp));
+
+        info!(
+            "Reading swaps with dai and spot file done.({})",
+            swaps.len()
+        );
+
+        Ok(swaps)
+    }
 }
 
 pub fn generate_swap_with_dai_and_spot_csv() -> Result<()> {

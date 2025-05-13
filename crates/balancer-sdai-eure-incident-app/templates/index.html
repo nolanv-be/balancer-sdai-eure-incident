@@ -9,11 +9,11 @@
 <figure class="mt-16">
     <div id="chart-cumulative-losses" class="aspect-video rounded-xl bg-gray-50 object-cover"></div>
     <script type="text/javascript">
-        const dates = [{% for date in dates %}"{{date}}",{% endfor %}];
-        const losses = [{% for loss in losses %}"{{loss}}",{% endfor %}];
-        const cumulative_losses = [{% for cumulative_loss in cumulative_losses %}"{{cumulative_loss}}",{% endfor %}];
+        const dates = [{% for data in cumulative_profit_loss_data_vec %}"{{data.date}}",{% endfor %}];
+        const profitsLosses = [{% for data in cumulative_profit_loss_data_vec %}"{{data.profit_loss}}",{% endfor %}];
+        const cumulativesProfitsLosses = [{% for data in cumulative_profit_loss_data_vec %}"{{data.cumulative_profit_loss}}",{% endfor %}];
     </script>
-    
+
     <script type="text/javascript">
         let chartCumulativeLosses = echarts.init(document.getElementById('chart-cumulative-losses'));
 
@@ -53,21 +53,26 @@
             ],
             dataZoom: [
                 {
+                    show: true,
+                },
+                {
                     type: 'inside',
-                }
+                },
             ],
             series: [
                 {
                     name: 'P&L',
                     yAxisIndex: 1,
                     type: 'bar',
-                    data: losses
+                    data: profitsLosses,
+                    sampling: 'lttb',
                 },
                 {
                     name: 'Cumulative P&L',
                     type: 'line',
                     step: 'end',
-                    data: cumulative_losses
+                    data: cumulativesProfitsLosses,
+                    sampling: 'lttb',
                 }
             ]
         };

@@ -1,12 +1,19 @@
 use askama::Template;
+use axum::extract::State;
 use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::{Router, routing};
+use balancer_sdai_eure_incident_data_generation::process::CumulativeProfitLossChartData;
 use eyre::Result;
 use log::info;
 use std::path::PathBuf;
 
 const APP_UNIX_SOCKET: &str = "balancer-sdai-eure-incident-app.socket";
+
+#[derive(Clone)]
+struct AppState {
+    cumulative_profit_loss_data_vec: Vec<CumulativeProfitLossChartData>,
+}
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -19,12 +26,17 @@ async fn main() -> Result<()> {
         tokio::net::UnixListener::from_std(get_nonblocking_unix_listener(app_socket_path.clone())?)
             .expect("Failed to convert to tokio socket listener");
 
+    let app_state = AppState {
+        cumulative_profit_loss_data_vec: CumulativeProfitLossChartData::load()?,
+    };
+
     let app = Router::new()
         .nest_service(
             "/assets",
             tower_http::services::ServeDir::new("crates/balancer-sdai-eure-incident-app/assets"),
         )
-        .route("/", routing::get(get_report));
+        .route("/", routing::get(get_report))
+        .with_state(app_state);
 
     info!("Listening on {}", app_socket_path.display());
     axum::serve(listener, app).await?;
@@ -32,25 +44,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn get_report() -> Result<impl IntoResponse, (StatusCode, String)> {
+async fn get_report(
+    State(app): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
     #[derive(Debug, Template)]
     #[template(path = "index.html")]
     struct Tmpl {
-        dates: Vec<String>,
-        losses: Vec<f64>,
-        cumulative_losses: Vec<f64>,
+        cumulative_profit_loss_data_vec: Vec<CumulativeProfitLossChartData>,
     }
 
     let template = Tmpl {
-        dates: vec![
-            "2022-01-01".into(),
-            "2022-01-02".into(),
-            "2022-01-03".into(),
-            "2022-01-04".into(),
-            "2022-01-05".into(),
-        ],
-        losses: vec![-0.6, -2.2, -1.1, 0.8, 0.2],
-        cumulative_losses: vec![-0.6, -2.8, -3.9, -3.1, -2.9],
+        cumulative_profit_loss_data_vec: app.cumulative_profit_loss_data_vec,
     };
     Ok(Html(template.render().map_err(|_| {
         (

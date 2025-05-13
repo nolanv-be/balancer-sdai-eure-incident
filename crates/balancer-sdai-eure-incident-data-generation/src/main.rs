@@ -1,6 +1,6 @@
-mod download;
+pub mod download;
 pub mod helper;
-mod process;
+pub mod process;
 
 use clap::Parser;
 use eyre::Result;
@@ -32,6 +32,10 @@ struct Args {
     /// Process swap data and sma EUR/USDT to generate swap with DAI and spot price
     #[arg(long, default_value = "false")]
     process_swap_dai_spot: bool,
+
+    /// Process swap with DAI and spot price to generate data for chart cumulative profit loss
+    #[arg(long, default_value = "false")]
+    process_chart_cumulative_profit_loss: bool,
 }
 
 #[tokio::main]
@@ -49,7 +53,11 @@ async fn main() -> Result<()> {
         .await?;
     }
 
-    process::start(args.process_sma, args.process_swap_dai_spot)?;
+    process::start(
+        args.process_sma,
+        args.process_swap_dai_spot,
+        args.process_chart_cumulative_profit_loss,
+    )?;
 
     Ok(())
 }
