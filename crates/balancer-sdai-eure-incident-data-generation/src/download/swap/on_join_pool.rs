@@ -67,7 +67,8 @@ pub fn process_on_join_pool_trace(
         ),
         JoinKind::TokenInForExactBptOut => Err(eyre!("TokenInForExactBptOut not implemented yet")),
         JoinKind::AllTokensInForExactBptOut => {
-            Err(eyre!("AllTokensInForExactBptOut not implemented yet"))
+            debug!("Skip AllTokensInForExactBptOut join pool, no swap done");
+            Ok(None)
         }
         JoinKind::Init => Err(eyre!("Init join should already be handled")),
     }
@@ -123,7 +124,7 @@ fn compute_join_pool_exact_asset_to_bpt(
         sub_trace_address,
         bpt_received,
         is_bpt_mint,
-        &vec![sdai_pool_balance, eure_pool_balance],
+        &[sdai_pool_balance, eure_pool_balance],
     )
     .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
