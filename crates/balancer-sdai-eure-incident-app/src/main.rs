@@ -4,7 +4,8 @@ use axum::http::StatusCode;
 use axum::response::{Html, IntoResponse};
 use axum::{Router, routing};
 use balancer_sdai_eure_incident_data_generation::process::{
-    CumulativeProfitLossChartData, PlotPriceDivergenceData,
+    CumulativeProfitLossChartData, PlotPriceDivergenceData, SwapWithDaiAndSpotCsv,
+    u256_str_to_float_str_6_decimals,
 };
 use eyre::Result;
 use log::info;
@@ -19,6 +20,7 @@ struct AppState {
     index_template: IndexTemplate,
     cumulative_profit_loss_template: CumulativeProfitLossTemplate,
     plot_price_divergence_bp_template: PlotPriceDivergenceBPTemplate,
+    price_spot_vs_pool_template: PriceSpotVsPoolTemplate,
 }
 
 #[derive(Debug, Template, Clone)]
@@ -37,6 +39,13 @@ struct CumulativeProfitLossTemplate {
 #[template(path = "components/plot-price-divergence.html")]
 struct PlotPriceDivergenceBPTemplate {
     plot_price_divergence_bp_vec: Vec<Vec<String>>,
+}
+
+#[derive(Debug, Template, Clone)]
+#[template(path = "components/price-spot-vs-pool.html")]
+struct PriceSpotVsPoolTemplate {
+    prices_spot: Vec<String>,
+    prices_pool: Vec<String>,
 }
 
 #[tokio::main]
@@ -66,6 +75,10 @@ async fn main() -> Result<()> {
             "/plot-price-divergence",
             routing::get(get_chart_plot_price_divergence),
         )
+        .route(
+            "/price-spot-vs-pool",
+            routing::get(get_chart_price_spot_vs_pool),
+        )
         .with_state(app_state);
 
     info!("Listening on {}", app_socket_path.display());
@@ -76,6 +89,8 @@ async fn main() -> Result<()> {
 
 fn load_app_state() -> Result<AppState> {
     let plot_price_divergence_data_vec = PlotPriceDivergenceData::load()?;
+    let cumulative_profit_loss_chart_data_vec = CumulativeProfitLossChartData::load()?;
+    let swap_with_dai_and_spot_data_vec = SwapWithDaiAndSpotCsv::load()?;
 
     let plot_price_divergence_bp_vec: Vec<Vec<String>> = (0..MAX_TIME_SINCE_LAST_UPDATE_CACHE)
         .step_by(PLOT_GRANULARITY)
@@ -91,7 +106,15 @@ fn load_app_state() -> Result<AppState> {
         })
         .collect();
 
-    let cumulative_profit_loss_chart_data_vec = CumulativeProfitLossChartData::load()?;
+    let (prices_spot, prices_pool) = swap_with_dai_and_spot_data_vec
+        .iter()
+        .map(|s| {
+            (
+                u256_str_to_float_str_6_decimals(&s.last_sma_eur_usdt_price),
+                u256_str_to_float_str_6_decimals(&s.eure_price_new),
+            )
+        })
+        .collect();
 
     Ok(AppState {
         index_template: IndexTemplate {
@@ -105,6 +128,10 @@ fn load_app_state() -> Result<AppState> {
         },
         plot_price_divergence_bp_template: PlotPriceDivergenceBPTemplate {
             plot_price_divergence_bp_vec,
+        },
+        price_spot_vs_pool_template: PriceSpotVsPoolTemplate {
+            prices_spot,
+            prices_pool,
         },
     })
 }
@@ -146,6 +173,19 @@ async fn get_chart_plot_price_divergence(
                 )
             })?,
     ))
+}
+
+async fn get_chart_price_spot_vs_pool(
+    State(app): State<AppState>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    Ok(Html(app.price_spot_vs_pool_template.render().map_err(
+        |_| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "Failed to render template".into(),
+            )
+        },
+    )?))
 }
 
 fn get_nonblocking_unix_listener(
