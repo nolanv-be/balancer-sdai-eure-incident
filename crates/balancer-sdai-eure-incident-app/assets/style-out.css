@@ -29,6 +29,7 @@
     --font-weight-semibold: 600;
     --tracking-tight: -0.025em;
     --radius-xl: 0.75rem;
+    --animate-pulse: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
     --aspect-video: 16 / 9;
     --default-transition-duration: 150ms;
     --default-transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
@@ -250,6 +251,9 @@
     width: calc(var(--spacing) * 11);
     height: calc(var(--spacing) * 11);
   }
+  .w-full {
+    width: 100%;
+  }
   .max-w-3xl {
     max-width: var(--container-3xl);
   }
@@ -264,6 +268,9 @@
   }
   .transform {
     transform: var(--tw-rotate-x,) var(--tw-rotate-y,) var(--tw-rotate-z,) var(--tw-skew-x,) var(--tw-skew-y,);
+  }
+  .animate-pulse {
+    animation: var(--animate-pulse);
   }
   .resize {
     resize: both;
@@ -573,6 +580,11 @@
 @property --tw-drop-shadow-size {
   syntax: "*";
   inherits: false;
+}
+@keyframes pulse {
+  50% {
+    opacity: 0.5;
+  }
 }
 @layer properties {
   @supports ((-webkit-hyphens: none) and (not (margin-trim: inline))) or ((-moz-orient: inline) and (not (color:rgb(from red r g b)))) {
