@@ -1,14 +1,15 @@
 use crate::download::ProviderFiller;
 use crate::download::block_timestamp::{BlockTimestampFetcher, TryIntoBlockTimestamp};
-use alloy::primitives::{Address, BlockNumber, U256, address};
+use crate::helper::ONE_18;
+use alloy::primitives::{Address, BlockNumber, address};
 use alloy::providers::Provider;
 use alloy::sol;
-use alloy::sol_types::private::u256;
 use eyre::{Context, Result};
 use log::info;
 use std::fs::OpenOptions;
 
 const SDAI_PRICE_CSV_FILE: &str = "data/sdai_price.csv";
+const SDAI_SAMPLING_INTERVAL: usize = 100;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct SdaiCsv {
@@ -32,8 +33,7 @@ pub async fn download_sdai_price(
     info!("Downloading sdai price from rpc...");
 
     const SDAI_ADDRESS: Address = address!("af204776c7245bF4147c2612BF6e5972Ee483701");
-    const STEP: usize = 1000;
-    let one_dai: U256 = u256(10).pow(u256(18));
+
     let sdai_contract = SDAI::new(SDAI_ADDRESS, &provider);
     let latest_block = provider.get_block_number().await?;
 
@@ -44,12 +44,14 @@ pub async fn download_sdai_price(
             .from_writer(OpenOptions::new().append(true).open(SDAI_PRICE_CSV_FILE)?),
     };
 
-    for current_block in (start_block_download..=latest_block).step_by(STEP) {
+    for current_block in (start_block_download..=latest_block).step_by(SDAI_SAMPLING_INTERVAL) {
         let block_timestamp = current_block
             .try_into_block_timestamp(&mut block_timestamp_fetcher)
             .await?;
 
-        if current_block == start_block_download || current_block % 10_000 < STEP as u64 {
+        if current_block == start_block_download
+            || current_block % 10_000 < SDAI_SAMPLING_INTERVAL as u64
+        {
             info!(
                 "Downloading sDAI price for block [{}/{}] ({})",
                 current_block,
@@ -62,7 +64,7 @@ pub async fn download_sdai_price(
         }
 
         let price = sdai_contract
-            .convertToAssets(one_dai)
+            .convertToAssets(ONE_18)
             .block(current_block.into())
             .call()
             .await?;

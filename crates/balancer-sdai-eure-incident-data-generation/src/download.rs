@@ -33,9 +33,7 @@ pub async fn start(
     is_download_swap: bool,
     is_download_sdai: bool,
 ) -> Result<()> {
-    let client = RpcClient::builder()
-        .layer(RetryBackoffLayer::new(MAX_RETRY, BACKOFF, CUPS))
-        .http(rpc_url.parse()?);
+    let client = RpcClient::builder().http(rpc_url.parse()?);
     let provider = ProviderBuilder::new().connect_client(client);
 
     if is_download_swap {

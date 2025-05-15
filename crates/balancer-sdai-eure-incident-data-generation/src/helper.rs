@@ -6,6 +6,7 @@ use alloy::sol_types::private::u256;
 use eyre::{OptionExt, Result};
 use std::collections::{BTreeMap, HashMap};
 
+pub const ONE_18: U256 = u256(1000000000000000000);
 pub trait DivUp
 where
     Self: Sized,
@@ -17,8 +18,8 @@ impl DivUp for U256 {
         if self.is_zero() {
             return Ok(u256(0));
         }
-        let one = u256(10).checked_pow(u256(18)).ok_or_eyre("10**18")?;
-        self.checked_mul(one)
+
+        self.checked_mul(ONE_18)
             .ok_or_eyre("div_up a * 10**18 overflow")?
             .checked_sub(u256(1))
             .ok_or_eyre("div_up (a / b) - 1 overflow")?
@@ -40,12 +41,12 @@ impl MulUp for U256 {
         if self.is_zero() || b.is_zero() {
             return Ok(u256(0));
         }
-        let one = u256(10).checked_pow(u256(18)).ok_or_eyre("10**18")?;
+
         self.checked_mul(b)
             .ok_or_eyre("mul_up a * b overflow")?
             .checked_sub(u256(1))
             .ok_or_eyre("mul_up a * b = 0")?
-            .checked_div(one)
+            .checked_div(ONE_18)
             .ok_or_eyre("10**18 = 0")?
             .checked_add(u256(1))
             .ok_or_eyre("mul_up (((a * b) - 1) / 10**18) + 1 overflow")
