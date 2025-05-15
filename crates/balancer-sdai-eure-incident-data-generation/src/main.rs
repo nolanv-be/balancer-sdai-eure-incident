@@ -36,6 +36,10 @@ struct Args {
     /// Process swap with DAI and spot price to generate data for chart cumulative profit loss
     #[arg(long, default_value = "false")]
     process_chart_cumulative_profit_loss: bool,
+
+    /// Process swap with DAI and spot price to generate data for chart plot price divergence between spot and pool
+    #[arg(long, default_value = "false")]
+    process_chart_plot_price_divergence: bool,
 }
 
 #[tokio::main]
@@ -57,6 +61,7 @@ async fn main() -> Result<()> {
         args.process_sma,
         args.process_swap_dai_spot,
         args.process_chart_cumulative_profit_loss,
+        args.process_chart_plot_price_divergence,
     )?;
 
     Ok(())
