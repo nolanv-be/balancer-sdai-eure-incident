@@ -1,0 +1,80 @@
+<figure class="mt-16">
+  <div id="chart-plot-price-divergence-pre-post-fix" class="aspect-video rounded-xl bg-gray-50 object-cover"></div>
+  <script type="text/javascript">
+    const chartPriceDivergencePlotPrePostFixData = [[{% for data in plot_price_divergence_bp_pre_fix_vec %}{{data}},{% endfor %}],[{% for data in plot_price_divergence_bp_post_fix_vec %}{{data}},{% endfor %}]];
+  </script>
+
+  <script type="text/javascript">
+    let chartPriceDivergencePlotPrePostFix = echarts.init(document.getElementById('chart-plot-price-divergence-pre-post-fix'));
+
+    let chartPriceDivergencePlotPrePostFixOption = {
+      dataset: [
+        {
+          source: chartPriceDivergencePlotPrePostFixData
+        },
+        {
+          transform: {
+            type: 'boxplot',
+            config: {
+              itemNameFormatter: function (params) {
+                if (params.value === 0){
+                  return 'Pre price cache fix'
+                }
+                return 'Post price cache fix';
+              }
+            }
+          }
+        },
+        {
+          fromDatasetIndex: 1,
+          fromTransformResult: 1
+        },
+      ],
+      toolbox: {
+        feature: {
+          restore: {},
+          saveAsImage: {}
+        }
+      },
+      tooltip: {},
+      legend: {},
+      xAxis: {
+        type: 'category',
+        boundaryGap: true,
+        nameGap: 30,
+        splitArea: {
+          show: false
+        },
+        splitLine: {
+          show: false
+        }
+      },
+      yAxis: {
+        splitLine: {
+          lineStyle: {
+            type: 'dashed'
+          }
+        },
+        scale: true
+      },
+      series: [
+        {
+          name: 'Price divergence',
+          type: 'boxplot',
+          datasetIndex: 1
+        },
+      ]
+    };
+
+    chartPriceDivergencePlotPrePostFix.setOption(chartPriceDivergencePlotPrePostFixOption);
+  </script>
+  <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
+    <svg class="mt-0.5 size-5 flex-none text-gray-300" viewBox="0 0 20 20" fill="currentColor"
+         aria-hidden="true" data-slot="icon">
+      <path fill-rule="evenodd"
+            d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
+            clip-rule="evenodd"/>
+    </svg>
+    Price divergence between the price cache and the spot EUR/USD price Pre/Post price cache fix
+  </figcaption>
+</figure>

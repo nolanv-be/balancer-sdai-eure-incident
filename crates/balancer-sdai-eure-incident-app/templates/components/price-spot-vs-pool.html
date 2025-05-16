@@ -1,8 +1,7 @@
 <figure class="mt-16">
   <div id="chart-price-spot-vs-pool" class="aspect-video rounded-xl bg-gray-50 object-cover"></div>
   <script type="text/javascript">
-    const pricesSpot = [{% for price in prices_spot %}"{{price}}",{% endfor %}];
-    const pricesPool = [{% for price in prices_pool %}"{{price}}",{% endfor %}];
+    const chartPriceSpotVsPoolData = [{% for data in prices %}["{{data.date}}", {{data.price_spot}}, {{data.price_pool}}],{% endfor %}];
   </script>
 
   <script type="text/javascript">
@@ -10,6 +9,10 @@
 
     // Specify the configuration items and data for the chart
     let chartPriceSpotVsPoolOption = {
+      dataset:{
+        source: chartPriceSpotVsPoolData,
+        dimensions: ['timestamp', 'Binance EUR/USDT', 'Pool cached EUR/USD'],
+      },
       toolbox: {
         feature: {
           dataZoom: {
@@ -22,7 +25,7 @@
       tooltip: {},
       legend: {},
       xAxis: {
-        data: dates,
+        type: 'time',
       },
       yAxis: [
         {
@@ -55,15 +58,28 @@
           name: 'Binance EUR/USDT',
           type: 'line',
           step: 'end',
-          data: pricesSpot,
-          sampling: 'lttb',
+          showSymbol: false,
+          sampling: 'minmax',
+          encode: {
+            x: 'timestamp',
+            y: 'Binance EUR/USDT'
+          },
+          markLine: {
+            symbol: ['none', 'none'],
+            label: { show: false },
+            data: [{name: 'Price cache updated', xAxis: dateCacheExpirationUpdated}]
+          }
         },
         {
           name: 'Pool cached EUR/USD',
           type: 'line',
           step: 'end',
-          data: pricesPool,
-          sampling: 'lttb',
+          showSymbol: false,
+          sampling: 'minmax',
+          encode: {
+            x: 'timestamp',
+            y: 'Pool cached EUR/USD'
+          },
         }
       ]
     };

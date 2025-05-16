@@ -52,7 +52,8 @@ pub fn generate_chart_cumulative_profit_loss_csv() -> Result<()> {
 
         let date = chrono::DateTime::<chrono::Utc>::from_timestamp(swap.block_timestamp as i64, 0)
             .unwrap()
-            .to_rfc3339();
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+            .to_string();
 
         let (profit_loss, divergence_bp) = compute_divergence_from_swap(swap)?;
         cumulative_profit_loss = cumulative_profit_loss

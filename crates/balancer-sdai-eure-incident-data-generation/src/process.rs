@@ -1,18 +1,18 @@
 mod chart_cumulative_profit_loss;
 mod chart_plot_price_divergence;
-mod sma_eur_usdt;
+mod sma_eur_using_btc;
 mod swap_with_dai_and_spot;
 
 use crate::helper::{DivUp, MulUp, ONE_18};
 use crate::process::chart_cumulative_profit_loss::generate_chart_cumulative_profit_loss_csv;
 use crate::process::chart_plot_price_divergence::generate_chart_plot_price_divergence_csv;
-use crate::process::sma_eur_usdt::generate_sma_eur_usdt_csv;
+use crate::process::sma_eur_using_btc::generate_sma_eur_usdt_using_btc_csv;
 use crate::process::swap_with_dai_and_spot::generate_swap_with_dai_and_spot_csv;
 use alloy::primitives::{I256, U256};
 pub use chart_cumulative_profit_loss::CumulativeProfitLossChartData;
 pub use chart_plot_price_divergence::PlotPriceDivergenceData;
 use eyre::{OptionExt, Result};
-pub use sma_eur_usdt::SmaEurUsdtCsv;
+pub use sma_eur_using_btc::SmaEurUsdtCsv;
 use std::str::FromStr;
 pub use swap_with_dai_and_spot::SwapWithDaiAndSpotCsv;
 
@@ -23,7 +23,7 @@ pub fn start(
     is_process_chart_plot_price_divergence: bool,
 ) -> Result<()> {
     if is_process_sma {
-        generate_sma_eur_usdt_csv()?
+        generate_sma_eur_usdt_using_btc_csv()?
     }
 
     if is_process_swap_dai_spot {

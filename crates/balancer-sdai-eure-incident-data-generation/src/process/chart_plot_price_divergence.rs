@@ -8,6 +8,7 @@ use log::info;
 const CHART_PLOT_PRICE_DIVERGENCE_FILE: &str = "data/chart-plot-price-divergence.csv";
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct PlotPriceDivergenceData {
+    pub timestamp: u64,
     pub time_since_last_update_cache: u64,
     pub is_profit_pool: bool,
     pub divergence_value: String,
@@ -18,16 +19,17 @@ impl PlotPriceDivergenceData {
         let mut csv_reader = csv::Reader::from_path(CHART_PLOT_PRICE_DIVERGENCE_FILE)
             .wrap_err("Error reading plot price divergence csv file")?;
 
-        let correlations: Vec<PlotPriceDivergenceData> = csv_reader
+        let mut divergences: Vec<PlotPriceDivergenceData> = csv_reader
             .deserialize::<PlotPriceDivergenceData>()
             .collect::<Result<Vec<_>, _>>()?;
+        divergences.sort_by(|a, b| a.timestamp.cmp(&b.timestamp));
 
         info!(
             "Reading plot price divergence file done.({})",
-            correlations.len()
+            divergences.len()
         );
 
-        Ok(correlations)
+        Ok(divergences)
     }
 }
 pub fn generate_chart_plot_price_divergence_csv() -> Result<()> {
@@ -57,6 +59,7 @@ pub fn generate_chart_plot_price_divergence_csv() -> Result<()> {
         let (divergence_value, divergence_bp) = compute_divergence_from_swap(swap)?;
 
         csv_writer.serialize(PlotPriceDivergenceData {
+            timestamp: swap.block_timestamp,
             time_since_last_update_cache,
             is_profit_pool: divergence_value.is_positive(),
             divergence_value: u256_str_to_float_str_6_decimals(

@@ -1007,6 +1007,7 @@ dependencies = [
  "askama",
  "axum",
  "balancer-sdai-eure-incident-data-generation",
+ "chrono",
  "env_logger",
  "eyre",
  "log",
