@@ -33,8 +33,8 @@ impl Kline {
     }
 
     fn load_btc_usdt_and_eur() -> Result<(Vec<Kline>, Vec<Kline>)> {
-        let mut klines_usdt = Self::load_klines("BTCUSDT")?;
-        let mut klines_eur = Self::load_klines("BTCEUR")?;
+        let klines_usdt = Self::load_klines("BTCUSDT")?;
+        let klines_eur = Self::load_klines("BTCEUR")?;
 
         ensure!(
             klines_usdt.len() == klines_eur.len(),

@@ -1,6 +1,5 @@
 use crate::download::ProviderFiller;
-use crate::download::block_timestamp::{BlockTimestampFetcher, TryIntoBlockTimestamp};
-use crate::helper::ONE_18;
+use crate::helper::{ONE_18, fetch_block_timestamp_by_number};
 use alloy::primitives::{Address, BlockNumber, address};
 use alloy::providers::Provider;
 use alloy::sol;
@@ -27,7 +26,6 @@ sol!(
 
 pub async fn download_sdai_price(
     provider: ProviderFiller,
-    mut block_timestamp_fetcher: BlockTimestampFetcher,
     start_block_download: BlockNumber,
 ) -> Result<()> {
     info!("Downloading sdai price from rpc...");
@@ -45,9 +43,7 @@ pub async fn download_sdai_price(
     };
 
     for current_block in (start_block_download..=latest_block).step_by(SDAI_SAMPLING_INTERVAL) {
-        let block_timestamp = current_block
-            .try_into_block_timestamp(&mut block_timestamp_fetcher)
-            .await?;
+        let block_timestamp = fetch_block_timestamp_by_number(&provider, current_block).await?;
 
         if current_block == start_block_download
             || current_block % 10_000 < SDAI_SAMPLING_INTERVAL as u64

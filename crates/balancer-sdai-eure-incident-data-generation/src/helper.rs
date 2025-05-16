@@ -1,9 +1,11 @@
 use crate::download::ProviderFiller;
-use alloy::primitives::{B256, Bytes, TxHash, U256};
+use alloy::eips::BlockNumberOrTag;
+use alloy::primitives::{B256, BlockNumber, BlockTimestamp, Bytes, I256, TxHash, U256};
+use alloy::providers::Provider;
 use alloy::providers::ext::TraceApi;
 use alloy::rpc::types::trace::parity::{VmInstruction, VmTrace};
 use alloy::sol_types::private::u256;
-use eyre::{OptionExt, Result};
+use eyre::{ContextCompat, OptionExt, Result};
 use std::collections::{BTreeMap, HashMap};
 
 pub const ONE_18: U256 = u256(1000000000000000000);
@@ -49,6 +51,22 @@ impl MulUp for U256 {
             .checked_div(ONE_18)
             .ok_or_eyre("10**18 = 0")?
             .checked_add(u256(1))
+            .ok_or_eyre("mul_up (((a * b) - 1) / 10**18) + 1 overflow")
+    }
+}
+impl MulUp for I256 {
+    fn mul_up(self, b: Self) -> Result<Self> {
+        if self.is_zero() || b.is_zero() {
+            return Ok(I256::ZERO);
+        }
+
+        self.checked_mul(b)
+            .ok_or_eyre("mul_up a * b overflow")?
+            .checked_sub(I256::ONE)
+            .ok_or_eyre("mul_up a * b = 0")?
+            .checked_div(I256::from(ONE_18))
+            .ok_or_eyre("10**18 = 0")?
+            .checked_add(I256::ONE)
             .ok_or_eyre("mul_up (((a * b) - 1) / 10**18) + 1 overflow")
     }
 }
@@ -317,4 +335,16 @@ fn add_opcode_to_instruction(vm_trace: &mut VmTrace, sub_path: &[usize]) {
             sub_path_counter += 1;
         }
     }
+}
+
+pub async fn fetch_block_timestamp_by_number(
+    provider: &ProviderFiller,
+    block: BlockNumber,
+) -> Result<BlockTimestamp> {
+    Ok(provider
+        .get_block_by_number(BlockNumberOrTag::Number(block))
+        .await?
+        .wrap_err("Block number not found")?
+        .header
+        .timestamp)
 }

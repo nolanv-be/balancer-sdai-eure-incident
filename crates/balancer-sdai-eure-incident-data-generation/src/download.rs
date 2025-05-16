@@ -1,22 +1,16 @@
-mod block_timestamp;
 mod sdai_price;
 mod swap;
 
-use crate::download::block_timestamp::BlockTimestampFetcher;
 use alloy::primitives::BlockNumber;
 use alloy::providers::fillers::{
     BlobGasFiller, ChainIdFiller, FillProvider, GasFiller, JoinFill, NonceFiller,
 };
 use alloy::providers::{Identity, ProviderBuilder, RootProvider};
 use alloy::rpc::client::RpcClient;
-use alloy::transports::layers::RetryBackoffLayer;
 use eyre::Result;
 pub use sdai_price::SdaiCsv;
 pub use swap::SwapCsv;
 
-const MAX_RETRY: u32 = 10;
-const BACKOFF: u64 = 1000;
-const CUPS: u64 = 10_000;
 const STEP: usize = 5_000;
 
 pub type ProviderFiller = FillProvider<
@@ -37,21 +31,11 @@ pub async fn start(
     let provider = ProviderBuilder::new().connect_client(client);
 
     if is_download_swap {
-        swap::download_swap(
-            provider.clone(),
-            BlockTimestampFetcher::try_new(provider.clone())?,
-            start_block_download,
-        )
-        .await?;
+        swap::download_swap(provider.clone(), start_block_download).await?;
     }
 
     if is_download_sdai {
-        sdai_price::download_sdai_price(
-            provider.clone(),
-            BlockTimestampFetcher::try_new(provider.clone())?,
-            start_block_download,
-        )
-        .await?;
+        sdai_price::download_sdai_price(provider.clone(), start_block_download).await?;
     }
 
     Ok(())

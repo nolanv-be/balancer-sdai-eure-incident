@@ -2,14 +2,13 @@ mod on_exit_pool;
 mod on_join_pool;
 mod on_swap;
 
-use crate::download::block_timestamp::TryIntoBlockTimestamp;
 use crate::download::swap::on_exit_pool::{decode_in_out_on_exit_pool, process_on_exit_pool_trace};
 use crate::download::swap::on_join_pool::{decode_in_out_on_join_pool, process_on_join_pool_trace};
 use crate::download::swap::on_swap::{decode_in_out_on_swap, process_on_swap_trace};
-use crate::download::{ProviderFiller, STEP, block_timestamp::BlockTimestampFetcher};
+use crate::download::{ProviderFiller, STEP};
 use crate::helper::{
     DivUp, MulUp, Position, StateBySubPath, StringifyArrayUsize, extract_sub_vm_trace,
-    fetch_sub_vm_trace, save_trace_to_file,
+    fetch_block_timestamp_by_number, fetch_sub_vm_trace, save_trace_to_file,
 };
 use alloy::primitives::{TxHash, U64};
 use alloy::providers::Provider;
@@ -21,8 +20,8 @@ use alloy::{
 };
 use eyre::{Context, OptionExt, Result, bail};
 use log::{debug, info};
-use std::collections::HashMap;
-use std::fs::OpenOptions;
+use std::fs::File;
+use tokio::task::JoinSet;
 
 const BALANCER_SDAI_EURE_POOL_ADDRESS: Address =
     address!("dd439304a77f54b1f7854751ac1169b279591ef7");
@@ -31,50 +30,7 @@ const SDAI_ARRAY_INDEX: usize = 0;
 const EURE_ADDRESS: Address = address!("cB444e90D8198415266c6a2724b7900fb12FC56E");
 const EURE_ARRAY_INDEX: usize = 1;
 const SWAPS_CSV_FILE: &str = "data/swaps.csv";
-
-pub async fn download_swap(
-    provider: ProviderFiller,
-    block_timestamp_fetcher: BlockTimestampFetcher,
-    start_block_download: BlockNumber,
-) -> Result<()> {
-    info!("Downloading swap data from rpc...");
-    let mut swap_fetcher = SwapFetcher::try_new(provider.clone(), block_timestamp_fetcher)?;
-
-    let latest_block = provider.get_block_number().await?;
-
-    for current_block in (start_block_download..=latest_block).step_by(STEP) {
-        let current_block_timestamp = current_block
-            .try_into_block_timestamp(&mut swap_fetcher.block_timestamp_fetcher)
-            .await?;
-        info!(
-            "Downloading swap for block [{}/{}] ({})",
-            current_block,
-            latest_block,
-            chrono::DateTime::<chrono::Utc>::from_timestamp(current_block_timestamp as i64, 0)
-                .unwrap()
-                .to_rfc3339()
-        );
-
-        swap_fetcher
-            .fetch_swap_csv(
-                current_block,
-                current_block.saturating_add(STEP.saturating_sub(1) as u64),
-            )
-            .await?;
-
-        swap_fetcher.flush()?
-    }
-
-    info!("Downloading swap data from rpc done.");
-    Ok(())
-}
-
-pub struct SwapFetcher {
-    pub csv_writer: csv::Writer<std::fs::File>,
-    pub provider: ProviderFiller,
-    pub block_timestamp_fetcher: BlockTimestampFetcher,
-    pub swap_csv_by_tx_hash_trace_path: HashMap<(String, String), SwapCsv>,
-}
+const MAX_CONCURRENT_FETCH: usize = 20;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct SwapCsv {
@@ -103,269 +59,252 @@ pub struct Swap {
     pub eure_amount: String,
 }
 
-impl SwapFetcher {
-    pub fn try_new(
-        provider: ProviderFiller,
-        block_timestamp_fetcher: BlockTimestampFetcher,
-    ) -> Result<Self> {
-        let Ok(mut csv_reader) = csv::Reader::from_path(SWAPS_CSV_FILE) else {
-            let csv_writer = csv::Writer::from_path(SWAPS_CSV_FILE)?;
+pub async fn download_swap(
+    provider: ProviderFiller,
+    start_block_download: BlockNumber,
+) -> Result<()> {
+    info!("Downloading swap data from rpc...");
+    let mut csv_writer = csv::Writer::from_path(SWAPS_CSV_FILE)?;
 
-            info!("No swap file found");
-            return Ok(Self {
-                csv_writer,
-                provider,
-                block_timestamp_fetcher,
-                swap_csv_by_tx_hash_trace_path: HashMap::new(),
-            });
-        };
-        info!("Reading swap file...");
+    let latest_block = provider.get_block_number().await?;
 
-        let mut swap_csv_by_tx_hash_trace_path = HashMap::new();
-        for swap_result in csv_reader.deserialize::<SwapCsv>() {
-            let swap = swap_result?;
-            swap_csv_by_tx_hash_trace_path
-                .insert((swap.tx_hash.clone(), swap.trace_path.clone()), swap);
-        }
+    for current_block in (start_block_download..=latest_block).step_by(STEP) {
+        let current_block_timestamp =
+            fetch_block_timestamp_by_number(&provider, current_block).await?;
         info!(
-            "Reading swap file done.({})",
-            swap_csv_by_tx_hash_trace_path.len()
+            "Downloading swap for block [{}/{}] ({})",
+            current_block,
+            latest_block,
+            chrono::DateTime::<chrono::Utc>::from_timestamp(current_block_timestamp as i64, 0)
+                .unwrap()
+                .to_rfc3339()
         );
 
-        let csv_writer = csv::WriterBuilder::new()
-            .has_headers(false)
-            .from_writer(OpenOptions::new().append(true).open(SWAPS_CSV_FILE)?);
-
-        Ok(Self {
-            csv_writer,
-            provider,
-            block_timestamp_fetcher,
-            swap_csv_by_tx_hash_trace_path,
-        })
+        fetch_swap_csv(
+            &provider,
+            &mut csv_writer,
+            current_block,
+            current_block.saturating_add(STEP.saturating_sub(1) as u64),
+        )
+        .await?;
     }
 
-    pub async fn fetch_swap_csv(
-        &mut self,
-        from_block: BlockNumber,
-        to_block: BlockNumber,
-    ) -> Result<Vec<SwapCsv>> {
-        let localized_traces = self
-            .provider
-            .trace_filter(
-                &TraceFilter::default()
-                    .to_address(vec![BALANCER_SDAI_EURE_POOL_ADDRESS])
-                    .from_block(from_block)
-                    .to_block(to_block),
-            )
-            .await?;
+    info!("Downloading swap data from rpc done.");
+    Ok(())
+}
 
-        let mut swap_csv_vec = Vec::new();
+pub async fn fetch_swap_csv(
+    provider: &ProviderFiller,
+    csv_writer: &mut csv::Writer<File>,
+    from_block: BlockNumber,
+    to_block: BlockNumber,
+) -> Result<()> {
+    let localized_traces = provider
+        .trace_filter(
+            &TraceFilter::default()
+                .to_address(vec![BALANCER_SDAI_EURE_POOL_ADDRESS])
+                .from_block(from_block)
+                .to_block(to_block),
+        )
+        .await?;
 
-        for localized_trace in localized_traces {
-            if localized_trace.trace.error.is_some() {
-                continue;
-            }
-            let tx_hash = localized_trace.transaction_hash.ok_or_eyre("no tx_hash")?;
-            let trace_path = localized_trace.trace.trace_address.stringify_vec_usize();
-            let block_number = localized_trace
-                .block_number
-                .ok_or_eyre("Block number is missing")?;
-            let block_timestamp = block_number
-                .try_into_block_timestamp(&mut self.block_timestamp_fetcher)
-                .await?;
-
-            if self
-                .swap_csv_by_tx_hash_trace_path
-                .contains_key(&(tx_hash.to_string(), trace_path.clone()))
-            {
-                debug!("Skip tx already fetched");
-                continue;
-            }
-
-            if !self
-                .provider
-                .get_transaction_receipt(tx_hash)
-                .await?
-                .ok_or_eyre("Failed to get receipt by hash {tx_hash}")?
-                .status()
-            {
-                debug!("Skip tx due to status");
-                continue;
-            }
-
-            let Some(call_action) = localized_trace.trace.action.as_call() else {
+    let mut tasks = JoinSet::new();
+    for localized_trace in localized_traces {
+        while tasks.len() >= MAX_CONCURRENT_FETCH {
+            let Some(join_result) = tasks.join_next().await else {
                 continue;
             };
-            let Some(trace_output) = localized_trace.trace.result.as_ref() else {
-                continue;
-            };
-
-            let on_swap_maybe = decode_in_out_on_swap(call_action, trace_output)?;
-            let on_join_pool_maybe = decode_in_out_on_join_pool(call_action, trace_output)?;
-            let on_exit_pool_maybe = decode_in_out_on_exit_pool(call_action, trace_output)?;
-
-            if on_swap_maybe.is_none()
-                && on_join_pool_maybe.is_none()
-                && on_exit_pool_maybe.is_none()
-            {
-                continue;
-            }
-
-            let (_, sub_trace_address) = localized_trace
-                .trace
-                .trace_address
-                .split_at(localized_trace.trace.trace_address.len() - 1);
-            let state_by_sub_path = self
-                .fetch_state_by_sub_path(&localized_trace, &tx_hash)
-                .await?;
-
-            let (sdai_price_cache_info, eure_price_cache_info) =
-                extract_price_cache_info_sdai_eure(&state_by_sub_path, sub_trace_address)?;
-            let swap_fee_percentage =
-                extract_swap_fee(&state_by_sub_path, sub_trace_address)?.to_string();
-
-            let swap_maybe = match (on_swap_maybe, on_join_pool_maybe, on_exit_pool_maybe) {
-                (Some((swap_in, swap_out)), None, None) => {
-                    match process_on_swap_trace(
-                        &state_by_sub_path,
-                        sub_trace_address,
-                        swap_in,
-                        swap_out,
-                    ) {
-                        Ok(Some(swap)) => {
-                            debug!("onSwap() => {:?}", swap);
-                            Some(swap)
-                        }
-                        Err(e) => {
-                            let _ = self.flush();
-                            self.log_processing_failed(&localized_trace, &tx_hash).await;
-                            bail!("Failed to process onSwap trace\n{:?}", e);
-                        }
-                        Ok(None) => None,
-                    }
+            let swap_csv_result = join_result?;
+            match swap_csv_result {
+                Err(e) => {
+                    csv_writer.flush()?;
+                    return Err(e);
                 }
-                (None, Some((join_pool_in, join_pool_out)), None) => {
-                    match process_on_join_pool_trace(
-                        &state_by_sub_path,
-                        sub_trace_address,
-                        join_pool_in,
-                        join_pool_out,
-                    ) {
-                        Ok(Some(swap)) => {
-                            debug!("onJoinPool() => {:?}", swap);
-                            Some(swap)
-                        }
-                        Err(e) => {
-                            let _ = self.flush();
-                            self.log_processing_failed(&localized_trace, &tx_hash).await;
-                            bail!("Failed to process onJoinPool trace\n{:?}", e);
-                        }
-                        Ok(None) => None,
-                    }
+                Ok(None) => {}
+                Ok(Some(swap_csv)) => {
+                    csv_writer.serialize(swap_csv)?;
                 }
-                (None, None, Some((exit_pool_in, exit_pool_out))) => {
-                    match process_on_exit_pool_trace(
-                        &state_by_sub_path,
-                        sub_trace_address,
-                        exit_pool_in,
-                        exit_pool_out,
-                    ) {
-                        Ok(Some(swap)) => {
-                            debug!("onExitPool() => {:?}", swap);
-                            Some(swap)
-                        }
-                        Err(e) => {
-                            let _ = self.flush();
-                            self.log_processing_failed(&localized_trace, &tx_hash).await;
-                            bail!("Failed to process onExitPool trace\n{:?}", e);
-                        }
-                        Ok(None) => None,
-                    }
-                }
-                (None, None, None) => None,
-                _ => bail!("onSwap(), onJoinPool() and onExitPool() are mutually exclusive"),
-            };
-
-            if let Some(swap) = swap_maybe {
-                let swap_csv = SwapCsv {
-                    is_buy_eure: swap.is_buy_eure,
-                    sdai_amount: swap.sdai_amount,
-                    eure_amount: swap.eure_amount,
-                    block_number,
-                    block_timestamp,
-                    tx_hash: tx_hash.to_string(),
-                    trace_path: trace_path.clone(),
-                    sdai_next_update: sdai_price_cache_info.last_update,
-                    eure_next_update: eure_price_cache_info.last_update,
-                    sdai_duration: sdai_price_cache_info.duration,
-                    eure_duration: eure_price_cache_info.duration,
-                    sdai_price_old: sdai_price_cache_info.price_old,
-                    eure_price_old: eure_price_cache_info.price_old,
-                    sdai_price_new: sdai_price_cache_info.price_new,
-                    eure_price_new: eure_price_cache_info.price_new,
-                    swap_fee_percentage,
-                };
-                self.insert_swap_csv(swap_csv.clone())?;
-                swap_csv_vec.push(swap_csv);
             }
         }
-
-        Ok(swap_csv_vec)
+        let provider = provider.clone();
+        tasks.spawn(async move { get_swap_csv(&provider, localized_trace).await });
     }
 
-    async fn fetch_state_by_sub_path(
-        &self,
-        localized_trace: &LocalizedTransactionTrace,
-        tx_hash: &TxHash,
-    ) -> Result<StateBySubPath> {
-        let (trace_address, _) = localized_trace
-            .trace
-            .trace_address
-            .split_at(localized_trace.trace.trace_address.len() - 1);
-        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, trace_address).await?;
+    let swaps_csv_result: Vec<Result<Option<SwapCsv>>> = tasks.join_all().await;
+    for swap_csv_result in swaps_csv_result {
+        match swap_csv_result {
+            Err(e) => {
+                csv_writer.flush()?;
+                return Err(e);
+            }
+            Ok(None) => {}
+            Ok(Some(swap_csv)) => {
+                csv_writer.serialize(swap_csv)?;
+            }
+        }
+    }
+    csv_writer.flush()?;
 
-        Ok(StateBySubPath::new(&vm_trace))
+    Ok(())
+}
+
+async fn get_swap_csv(
+    provider: &ProviderFiller,
+    localized_trace: LocalizedTransactionTrace,
+) -> Result<Option<SwapCsv>> {
+    if localized_trace.trace.error.is_some() {
+        return Ok(None);
+    }
+    let tx_hash = localized_trace.transaction_hash.ok_or_eyre("no tx_hash")?;
+    let trace_path = localized_trace.trace.trace_address.stringify_vec_usize();
+    let block_number = localized_trace
+        .block_number
+        .ok_or_eyre("Block number is missing")?;
+    let block_timestamp = fetch_block_timestamp_by_number(provider, block_number).await?;
+
+    if !provider
+        .get_transaction_receipt(tx_hash)
+        .await?
+        .ok_or_eyre("Failed to get receipt by hash {tx_hash}")?
+        .status()
+    {
+        debug!("Skip tx due to status");
+        return Ok(None);
     }
 
-    async fn log_processing_failed(
-        &self,
-        localized_trace: &LocalizedTransactionTrace,
-        tx_hash: &B256,
-    ) {
-        let vm_trace = fetch_sub_vm_trace(&self.provider, *tx_hash, &[])
-            .await
-            .expect("Failed to fetch sub vm trace");
-        save_trace_to_file(vm_trace.clone(), tx_hash, "full")
-            .expect("Failed to save trace to file");
+    let Some(call_action) = localized_trace.trace.action.as_call() else {
+        return Ok(None);
+    };
+    let Some(trace_output) = localized_trace.trace.result.as_ref() else {
+        return Ok(None);
+    };
 
-        let (trace_address, _) = localized_trace
-            .trace
-            .trace_address
-            .split_at(localized_trace.trace.trace_address.len() - 1);
-        let sub_vm_trace = extract_sub_vm_trace(vm_trace.clone(), trace_address)
-            .expect("Failed to extract sub vm trace");
-        save_trace_to_file(sub_vm_trace.clone(), tx_hash, "sub")
-            .expect("Failed to save trace to file");
+    let on_swap_maybe = decode_in_out_on_swap(call_action, trace_output)?;
+    let on_join_pool_maybe = decode_in_out_on_join_pool(call_action, trace_output)?;
+    let on_exit_pool_maybe = decode_in_out_on_exit_pool(call_action, trace_output)?;
 
-        let state_by_sub_path = StateBySubPath::new(&vm_trace);
-        debug!("{:#?}", &state_by_sub_path);
+    if on_swap_maybe.is_none() && on_join_pool_maybe.is_none() && on_exit_pool_maybe.is_none() {
+        return Ok(None);
     }
 
-    fn insert_swap_csv(&mut self, swap_csv: SwapCsv) -> Result<()> {
-        self.swap_csv_by_tx_hash_trace_path.insert(
-            (swap_csv.tx_hash.clone(), swap_csv.trace_path.clone()),
-            swap_csv.clone(),
-        );
+    let (_, sub_trace_address) = localized_trace
+        .trace
+        .trace_address
+        .split_at(localized_trace.trace.trace_address.len() - 1);
+    let state_by_sub_path = fetch_state_by_sub_path(provider, &localized_trace, &tx_hash).await?;
 
-        self.csv_writer.serialize(&swap_csv)?;
+    let (sdai_price_cache_info, eure_price_cache_info) =
+        extract_price_cache_info_sdai_eure(&state_by_sub_path, sub_trace_address)?;
+    let swap_fee_percentage = extract_swap_fee(&state_by_sub_path, sub_trace_address)?.to_string();
 
-        Ok(())
-    }
+    let swap_maybe = match (on_swap_maybe, on_join_pool_maybe, on_exit_pool_maybe) {
+        (Some((swap_in, swap_out)), None, None) => {
+            match process_on_swap_trace(&state_by_sub_path, sub_trace_address, swap_in, swap_out) {
+                Ok(Some(swap)) => {
+                    debug!("onSwap() => {:?}", swap);
+                    Some(swap)
+                }
+                Err(e) => {
+                    log_processing_failed(provider, &localized_trace, &tx_hash).await;
+                    bail!("Failed to process onSwap trace\n{:?}", e);
+                }
+                Ok(None) => None,
+            }
+        }
+        (None, Some((join_pool_in, join_pool_out)), None) => {
+            match process_on_join_pool_trace(
+                &state_by_sub_path,
+                sub_trace_address,
+                join_pool_in,
+                join_pool_out,
+            ) {
+                Ok(Some(swap)) => {
+                    debug!("onJoinPool() => {:?}", swap);
+                    Some(swap)
+                }
+                Err(e) => {
+                    log_processing_failed(provider, &localized_trace, &tx_hash).await;
+                    bail!("Failed to process onJoinPool trace\n{:?}", e);
+                }
+                Ok(None) => None,
+            }
+        }
+        (None, None, Some((exit_pool_in, exit_pool_out))) => {
+            match process_on_exit_pool_trace(
+                &state_by_sub_path,
+                sub_trace_address,
+                exit_pool_in,
+                exit_pool_out,
+            ) {
+                Ok(Some(swap)) => {
+                    debug!("onExitPool() => {:?}", swap);
+                    Some(swap)
+                }
+                Err(e) => {
+                    log_processing_failed(provider, &localized_trace, &tx_hash).await;
+                    bail!("Failed to process onExitPool trace\n{:?}", e);
+                }
+                Ok(None) => None,
+            }
+        }
+        (None, None, None) => None,
+        _ => bail!("onSwap(), onJoinPool() and onExitPool() are mutually exclusive"),
+    };
 
-    pub fn flush(&mut self) -> Result<()> {
-        self.csv_writer.flush()?;
-        self.block_timestamp_fetcher.flush()
-    }
+    Ok(swap_maybe.map(|swap| SwapCsv {
+        is_buy_eure: swap.is_buy_eure,
+        sdai_amount: swap.sdai_amount,
+        eure_amount: swap.eure_amount,
+        block_number,
+        block_timestamp,
+        tx_hash: tx_hash.to_string(),
+        trace_path: trace_path.clone(),
+        sdai_next_update: sdai_price_cache_info.last_update,
+        eure_next_update: eure_price_cache_info.last_update,
+        sdai_duration: sdai_price_cache_info.duration,
+        eure_duration: eure_price_cache_info.duration,
+        sdai_price_old: sdai_price_cache_info.price_old,
+        eure_price_old: eure_price_cache_info.price_old,
+        sdai_price_new: sdai_price_cache_info.price_new,
+        eure_price_new: eure_price_cache_info.price_new,
+        swap_fee_percentage,
+    }))
+}
+
+async fn fetch_state_by_sub_path(
+    provider: &ProviderFiller,
+    localized_trace: &LocalizedTransactionTrace,
+    tx_hash: &TxHash,
+) -> Result<StateBySubPath> {
+    let (trace_address, _) = localized_trace
+        .trace
+        .trace_address
+        .split_at(localized_trace.trace.trace_address.len() - 1);
+    let vm_trace = fetch_sub_vm_trace(provider, *tx_hash, trace_address).await?;
+
+    Ok(StateBySubPath::new(&vm_trace))
+}
+
+async fn log_processing_failed(
+    provider: &ProviderFiller,
+    localized_trace: &LocalizedTransactionTrace,
+    tx_hash: &B256,
+) {
+    let vm_trace = fetch_sub_vm_trace(provider, *tx_hash, &[])
+        .await
+        .expect("Failed to fetch sub vm trace");
+    save_trace_to_file(vm_trace.clone(), tx_hash, "full").expect("Failed to save trace to file");
+
+    let (trace_address, _) = localized_trace
+        .trace
+        .trace_address
+        .split_at(localized_trace.trace.trace_address.len() - 1);
+    let sub_vm_trace = extract_sub_vm_trace(vm_trace.clone(), trace_address)
+        .expect("Failed to extract sub vm trace");
+    save_trace_to_file(sub_vm_trace.clone(), tx_hash, "sub").expect("Failed to save trace to file");
+
+    let state_by_sub_path = StateBySubPath::new(&vm_trace);
+    debug!("{:#?}", &state_by_sub_path);
 }
 
 fn compute_bpt_ratio(

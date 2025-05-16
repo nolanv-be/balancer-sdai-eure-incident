@@ -7,7 +7,7 @@ use alloy::primitives::U256;
 use alloy::rpc::types::trace::parity::{CallAction, TraceOutput};
 use alloy::sol;
 use alloy::sol_types::SolCall;
-use eyre::{Context, OptionExt, Result, eyre};
+use eyre::{Context, OptionExt, Result, bail, eyre};
 
 sol!(
     #[derive(Debug, PartialEq, Eq)]
@@ -49,33 +49,55 @@ pub fn process_on_swap_trace(
     swap_in: onSwapCall,
     swap_out: U256,
 ) -> Result<Option<Swap>> {
+    let (amount_in, amount_out) = match swap_in.swapRequest.kind {
+        SwapKind::GIVEN_IN => (swap_in.swapRequest.amount, swap_out),
+        SwapKind::GIVEN_OUT => (swap_out, swap_in.swapRequest.amount),
+        SwapKind::__Invalid => bail!("Invalid swap kind"),
+    };
+
     match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
         (SDAI_ADDRESS, EURE_ADDRESS) => {
-            return Ok(Some(compute_swap_csv_sdai_to_eure(&swap_in, swap_out)));
+            return Ok(Some(compute_swap_csv_sdai_to_eure(amount_in, amount_out)));
         }
         (EURE_ADDRESS, SDAI_ADDRESS) => {
-            return Ok(Some(compute_swap_csv_eure_to_sdai(&swap_in, swap_out)));
+            return Ok(Some(compute_swap_csv_eure_to_sdai(amount_in, amount_out)));
         }
         _ => {}
     }
 
     match (swap_in.swapRequest.tokenIn, swap_in.swapRequest.tokenOut) {
-        (BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS) => {
-            compute_swap_csv_bpt_to_eure(&state_by_sub_path, sub_trace_address, &swap_in, swap_out)
-                .map(Some)
-        }
-        (BALANCER_SDAI_EURE_POOL_ADDRESS, SDAI_ADDRESS) => {
-            compute_swap_csv_bpt_to_sdai(&state_by_sub_path, sub_trace_address, &swap_in, swap_out)
-                .map(Some)
-        }
-        (EURE_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
-            compute_swap_csv_eure_to_bpt(&state_by_sub_path, sub_trace_address, &swap_in, swap_out)
-                .map(Some)
-        }
-        (SDAI_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
-            compute_swap_csv_sdai_to_bpt(&state_by_sub_path, sub_trace_address, &swap_in, swap_out)
-                .map(Some)
-        }
+        (BALANCER_SDAI_EURE_POOL_ADDRESS, EURE_ADDRESS) => compute_swap_csv_bpt_to_eure(
+            state_by_sub_path,
+            sub_trace_address,
+            swap_in.balances,
+            amount_in,
+            amount_out,
+        )
+        .map(Some),
+        (BALANCER_SDAI_EURE_POOL_ADDRESS, SDAI_ADDRESS) => compute_swap_csv_bpt_to_sdai(
+            state_by_sub_path,
+            sub_trace_address,
+            swap_in.balances,
+            amount_in,
+            amount_out,
+        )
+        .map(Some),
+        (EURE_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => compute_swap_csv_eure_to_bpt(
+            state_by_sub_path,
+            sub_trace_address,
+            swap_in.balances,
+            amount_in,
+            amount_out,
+        )
+        .map(Some),
+        (SDAI_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => compute_swap_csv_sdai_to_bpt(
+            state_by_sub_path,
+            sub_trace_address,
+            swap_in.balances,
+            amount_in,
+            amount_out,
+        )
+        .map(Some),
         (SDAI_ADDRESS, SDAI_ADDRESS)
         | (EURE_ADDRESS, EURE_ADDRESS)
         | (BALANCER_SDAI_EURE_POOL_ADDRESS, BALANCER_SDAI_EURE_POOL_ADDRESS) => {
@@ -84,33 +106,34 @@ pub fn process_on_swap_trace(
         _ => Err(eyre::eyre!("onSwap unknown token")),
     }
 }
-fn compute_swap_csv_sdai_to_eure(swap_in: &onSwapCall, eure_received: U256) -> Swap {
+fn compute_swap_csv_sdai_to_eure(sdai_sent: U256, eure_received: U256) -> Swap {
     Swap {
         is_buy_eure: true,
-        sdai_amount: swap_in.swapRequest.amount.to_string(),
+        sdai_amount: sdai_sent.to_string(),
         eure_amount: eure_received.to_string(),
     }
 }
-fn compute_swap_csv_eure_to_sdai(swap_in: &onSwapCall, sdai_received: U256) -> Swap {
+fn compute_swap_csv_eure_to_sdai(eur_sent: U256, sdai_received: U256) -> Swap {
     Swap {
         is_buy_eure: false,
         sdai_amount: sdai_received.to_string(),
-        eure_amount: swap_in.swapRequest.amount.to_string(),
+        eure_amount: eur_sent.to_string(),
     }
 }
 fn compute_swap_csv_bpt_to_sdai(
     state_by_sub_path: &StateBySubPath,
     sub_trace_address: &[usize],
-    swap_in: &onSwapCall,
+    balances: Vec<U256>,
+    bpt_sent: U256,
     sdai_received: U256,
 ) -> Result<Swap> {
     let is_bpt_mint = false;
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
         state_by_sub_path,
         sub_trace_address,
-        swap_in.swapRequest.amount,
+        bpt_sent,
         is_bpt_mint,
-        &swap_in.balances,
+        &balances,
     )
     .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
@@ -127,16 +150,17 @@ fn compute_swap_csv_bpt_to_sdai(
 fn compute_swap_csv_bpt_to_eure(
     state_by_sub_path: &StateBySubPath,
     sub_trace_address: &[usize],
-    swap_in: &onSwapCall,
+    balances: Vec<U256>,
+    bpt_sent: U256,
     eure_received: U256,
 ) -> Result<Swap> {
     let is_bpt_mint = false;
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
         state_by_sub_path,
         sub_trace_address,
-        swap_in.swapRequest.amount,
+        bpt_sent,
         is_bpt_mint,
-        &swap_in.balances,
+        &balances,
     )
     .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
@@ -153,16 +177,16 @@ fn compute_swap_csv_bpt_to_eure(
 fn compute_swap_csv_sdai_to_bpt(
     state_by_sub_path: &StateBySubPath,
     sub_trace_address: &[usize],
-    swap_in: &onSwapCall,
+    mut balances: Vec<U256>,
+    sdai_sent: U256,
     bpt_received: U256,
 ) -> Result<Swap> {
     let is_bpt_mint = true;
 
-    let mut balances = swap_in.balances.clone();
     balances
         .get_mut(SDAI_ARRAY_INDEX)
         .ok_or_eyre("sDAI balance of the pool not found")?
-        .checked_add(swap_in.swapRequest.amount)
+        .checked_add(sdai_sent)
         .ok_or_eyre("sDAI balance of the pool + sDAI swap amount overflow")?;
 
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
@@ -174,13 +198,9 @@ fn compute_swap_csv_sdai_to_bpt(
     )
     .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
-    let sdai_swapped_to_eure = swap_in
-        .swapRequest
-        .amount
-        .checked_sub(sdai_from_bpt)
-        .ok_or_eyre(
-            "The amount of sDAI swapped is less than the amount of sDAI from BPT ownership",
-        )?;
+    let sdai_swapped_to_eure = sdai_sent.checked_sub(sdai_from_bpt).ok_or_eyre(
+        "The amount of sDAI swapped is less than the amount of sDAI from BPT ownership",
+    )?;
 
     Ok(Swap {
         is_buy_eure: true,
@@ -191,16 +211,16 @@ fn compute_swap_csv_sdai_to_bpt(
 fn compute_swap_csv_eure_to_bpt(
     state_by_sub_path: &StateBySubPath,
     sub_trace_address: &[usize],
-    swap_in: &onSwapCall,
+    mut balances: Vec<U256>,
+    eure_sent: U256,
     bpt_received: U256,
 ) -> Result<Swap> {
     let is_bpt_mint = true;
 
-    let mut balances = swap_in.balances.clone();
     balances
         .get_mut(EURE_ARRAY_INDEX)
         .ok_or_eyre("EURe balance of the pool not found")?
-        .checked_add(swap_in.swapRequest.amount)
+        .checked_add(eure_sent)
         .ok_or_eyre("EURe balance of the pool + EURe swap amount overflow")?;
 
     let (sdai_from_bpt, eure_from_bpt) = compute_sdai_eure_from_bpt(
@@ -212,13 +232,9 @@ fn compute_swap_csv_eure_to_bpt(
     )
     .wrap_err("Failed to compute the amount of sdai/eure from bpt ownership")?;
 
-    let eure_swapped_to_sdai = swap_in
-        .swapRequest
-        .amount
-        .checked_sub(eure_from_bpt)
-        .ok_or_eyre(
-            "The amount of EURe swapped is less than the amount of EURe from BPT ownership",
-        )?;
+    let eure_swapped_to_sdai = eure_sent.checked_sub(eure_from_bpt).ok_or_eyre(
+        "The amount of EURe swapped is less than the amount of EURe from BPT ownership",
+    )?;
 
     Ok(Swap {
         is_buy_eure: false,
