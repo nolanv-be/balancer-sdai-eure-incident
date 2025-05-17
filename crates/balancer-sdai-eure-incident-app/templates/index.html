@@ -126,11 +126,12 @@
 <p class="mt-4">
     The graph illustrates the pool's cumulative profit or loss per basis point. This figure excludes fees paid to the
     pool and any potential slippage. This allows us to see the impact of the misconfigured cache by comparing realized
-    losses before and after the correction. Although the fix to the price cache drastically reduced losses resulting
-    from price divergence, a slight loss persists. This remaining loss can potentially be covered by fees and/or
-    slippage.
+    losses before and after the correction. Even though the price cache correction drastically cut down on losses, a
+    small loss still lingers. This is because ChainLink doesn't update the price for deviations of less than 0.1%, and
+    updates are also paused on weekends. However, this remaining loss might be partially offset by fees and/or slippage.
 </p>
 
+<h2 class="mt-16 text-pretty text-3xl font-semibold tracking-tight text-gray-900">Estimated total loss</h2>
 
 <div class="mt-32"/>
 <!---
