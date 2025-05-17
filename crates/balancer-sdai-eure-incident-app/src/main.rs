@@ -7,9 +7,11 @@ use balancer_sdai_eure_incident_data_generation::process::{
     CumulativeProfitLossChartData, PlotPriceDivergenceData, SwapWithDaiAndSpotCsv,
     u256_str_to_float_str_6_decimals,
 };
-use eyre::Result;
+use eyre::{OptionExt, Result};
 use log::info;
+use std::collections::HashMap;
 use std::path::PathBuf;
+use std::str::FromStr;
 
 const APP_UNIX_SOCKET: &str = "balancer-sdai-eure-incident-app.socket";
 const MAX_TIME_SINCE_LAST_UPDATE_CACHE: u64 = 10800;
@@ -23,6 +25,7 @@ struct AppCache {
     plot_price_divergence_bp_html: Html<String>,
     price_spot_vs_pool_html: Html<String>,
     plot_price_divergence_bp_pre_post_fix_html: Html<String>,
+    volume_by_price_divergence_html: Html<String>,
 }
 
 #[derive(Debug, Template, Clone)]
@@ -63,6 +66,19 @@ struct PlotPriceDivergenceBPPrePostFixTemplate {
     plot_price_divergence_bp_post_fix_vec: Vec<String>,
 }
 
+#[derive(Debug, Template, Clone)]
+#[template(path = "components/volume-by-price-divergence.html")]
+struct VolumeByPriceDivergenceTemplate {
+    volume_by_price_divergence: Vec<VolumeByPriceDivergence>,
+}
+
+#[derive(Debug, Clone)]
+struct VolumeByPriceDivergence {
+    price_divergence_bp: String,
+    price_divergence_value_profit: f64,
+    price_divergence_value_loss: f64,
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     env_logger::init();
@@ -97,6 +113,10 @@ async fn main() -> Result<()> {
         .route(
             "/plot-price-divergence-pre-post",
             routing::get(get_chart_plot_price_pre_post_fix_divergence),
+        )
+        .route(
+            "/volume-by-price-divergence",
+            routing::get(get_chart_volume_by_price_divergence),
         )
         .with_state(app_state);
 
@@ -173,6 +193,41 @@ fn load_app_cache() -> Result<AppCache> {
         plot_price_divergence_bp_post_fix_vec,
     };
 
+    let mut volume_by_price_divergence_map: HashMap<String, VolumeByPriceDivergence> =
+        HashMap::new();
+    for divergence_data in plot_price_divergence_data_vec {
+        let price_divergence_bp = f64::from_str(&divergence_data.divergence_bp)?
+            .round()
+            .to_string();
+
+        if !volume_by_price_divergence_map.contains_key(&price_divergence_bp) {
+            volume_by_price_divergence_map.insert(
+                price_divergence_bp.clone(),
+                VolumeByPriceDivergence {
+                    price_divergence_bp: price_divergence_bp.clone(),
+                    price_divergence_value_profit: 0f64,
+                    price_divergence_value_loss: 0f64,
+                },
+            );
+        }
+
+        let volume_by_price_divergence = volume_by_price_divergence_map
+            .get_mut(&price_divergence_bp)
+            .ok_or_eyre("No volume by price divergence for price divergence bp")?;
+
+        if divergence_data.is_profit_pool {
+            volume_by_price_divergence.price_divergence_value_profit +=
+                f64::from_str(&divergence_data.divergence_value)?;
+        } else {
+            volume_by_price_divergence.price_divergence_value_loss +=
+                f64::from_str(&divergence_data.divergence_value)?;
+        }
+    }
+
+    let volume_by_price_divergence_template = VolumeByPriceDivergenceTemplate {
+        volume_by_price_divergence: volume_by_price_divergence_map.into_values().collect(),
+    };
+
     Ok(AppCache {
         index_html: Html(index_template.render()?),
         cumulative_profit_loss_html: Html(cumulative_profit_loss_template.render()?),
@@ -181,6 +236,7 @@ fn load_app_cache() -> Result<AppCache> {
         plot_price_divergence_bp_pre_post_fix_html: Html(
             plot_price_divergence_bp_pre_post_fix_template.render()?,
         ),
+        volume_by_price_divergence_html: Html(volume_by_price_divergence_template.render()?),
     })
 }
 
@@ -212,6 +268,12 @@ async fn get_chart_plot_price_pre_post_fix_divergence(
     State(app): State<AppCache>,
 ) -> Result<impl IntoResponse, (StatusCode, String)> {
     Ok(app.plot_price_divergence_bp_pre_post_fix_html)
+}
+
+async fn get_chart_volume_by_price_divergence(
+    State(app): State<AppCache>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    Ok(app.volume_by_price_divergence_html)
 }
 
 fn get_nonblocking_unix_listener(
