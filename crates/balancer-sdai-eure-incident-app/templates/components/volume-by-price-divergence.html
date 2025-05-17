@@ -1,7 +1,7 @@
 <figure class="mt-16">
   <div id="chart-volume-by-price-divergence" class="aspect-video rounded-xl bg-gray-50 object-cover"></div>
   <script type="text/javascript">
-    const chartVolumeByPriceDivergenceData = [{% for data in volume_by_price_divergence %}[{{data.price_divergence_bp}}, {{data.price_divergence_value_profit}}, {{data.price_divergence_value_loss}}],{% endfor %}];
+    const chartVolumeByPriceDivergenceData = [{% for data in price_divergences_bp %}[{{data.price_divergence_bp}}, {{data.price_divergence_value_pre}}, {{data.price_divergence_value_post}}],{% endfor %}];
   </script>
 
   <script type="text/javascript">
@@ -10,7 +10,7 @@
     let chartVolumeByPriceDivergenceOption = {
       dataset:{
         source: chartVolumeByPriceDivergenceData,
-        dimensions: ['timestamp', 'Volume by price divergence profit', 'Volume by price divergence loss'],
+        dimensions: ['timestamp', 'Divergence value pre-fix', 'Divergence value post-fix'],
       },
       toolbox: {
         feature: {
@@ -21,7 +21,12 @@
           saveAsImage: {}
         }
       },
-      tooltip: {},
+      tooltip: {
+        trigger: 'axis',
+        position: function (pt) {
+          return [pt[0], '10%'];
+        }
+      },
       legend: {},
       xAxis: {
         type: 'value',
@@ -50,31 +55,35 @@
       dataZoom: [
         {
           show: true,
+          startValue: -100,
+          endValue: 100
         },
         {
           type: 'inside',
+          startValue: -100,
+          endValue: 100
         },
       ],
       series: [
         {
-          name: 'Volume by price divergence profit',
+          name: 'Divergence value pre-fix',
           type: 'bar',
           showSymbol: false,
-          sampling: 'lttb',
           encode: {
             x: 'timestamp',
-            y: 'Volume by price divergence profit'
+            y: 'Divergence value pre-fix'
           }
         },
         {
-          name: 'Volume by price divergence loss',
+          name: 'Divergence value post-fix',
           type: 'bar',
           showSymbol: false,
           step: 'end',
-          sampling: 'lttb',
+          yAxisIndex: 1,
+          barGap: '-100%',
           encode: {
             x: 'timestamp',
-            y: 'Volume by price divergence loss'
+            y: 'Divergence value post-fix'
           }
         }
       ]
@@ -89,6 +98,6 @@
             d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
             clip-rule="evenodd"/>
     </svg>
-    Volume by price divergence profit and loss
+    Divergence value by price divergence basis point(without fee and slippage)
   </figcaption>
 </figure>

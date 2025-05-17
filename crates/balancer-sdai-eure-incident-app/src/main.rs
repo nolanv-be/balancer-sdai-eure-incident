@@ -69,14 +69,14 @@ struct PlotPriceDivergenceBPPrePostFixTemplate {
 #[derive(Debug, Template, Clone)]
 #[template(path = "components/volume-by-price-divergence.html")]
 struct VolumeByPriceDivergenceTemplate {
-    volume_by_price_divergence: Vec<VolumeByPriceDivergence>,
+    price_divergences_bp: Vec<VolumeByPriceDivergence>,
 }
 
 #[derive(Debug, Clone)]
 struct VolumeByPriceDivergence {
     price_divergence_bp: String,
-    price_divergence_value_profit: f64,
-    price_divergence_value_loss: f64,
+    price_divergence_value_pre: f64,
+    price_divergence_value_post: f64,
 }
 
 #[tokio::main]
@@ -196,17 +196,21 @@ fn load_app_cache() -> Result<AppCache> {
     let mut volume_by_price_divergence_map: HashMap<String, VolumeByPriceDivergence> =
         HashMap::new();
     for divergence_data in plot_price_divergence_data_vec {
-        let price_divergence_bp = f64::from_str(&divergence_data.divergence_bp)?
-            .round()
-            .to_string();
+        let price_divergence_bp = if divergence_data.is_profit_pool {
+            f64::from_str(&divergence_data.divergence_bp)?
+        } else {
+            -f64::from_str(&divergence_data.divergence_bp)?
+        }
+        .round()
+        .to_string();
 
         if !volume_by_price_divergence_map.contains_key(&price_divergence_bp) {
             volume_by_price_divergence_map.insert(
                 price_divergence_bp.clone(),
                 VolumeByPriceDivergence {
                     price_divergence_bp: price_divergence_bp.clone(),
-                    price_divergence_value_profit: 0f64,
-                    price_divergence_value_loss: 0f64,
+                    price_divergence_value_pre: 0.0,
+                    price_divergence_value_post: 0.0,
                 },
             );
         }
@@ -215,17 +219,16 @@ fn load_app_cache() -> Result<AppCache> {
             .get_mut(&price_divergence_bp)
             .ok_or_eyre("No volume by price divergence for price divergence bp")?;
 
-        if divergence_data.is_profit_pool {
-            volume_by_price_divergence.price_divergence_value_profit +=
+        if divergence_data.timestamp < TIMESTAMP_CACHE_EXPIRATION_UPDATED {
+            volume_by_price_divergence.price_divergence_value_pre +=
                 f64::from_str(&divergence_data.divergence_value)?;
         } else {
-            volume_by_price_divergence.price_divergence_value_loss +=
+            volume_by_price_divergence.price_divergence_value_post +=
                 f64::from_str(&divergence_data.divergence_value)?;
         }
     }
-
     let volume_by_price_divergence_template = VolumeByPriceDivergenceTemplate {
-        volume_by_price_divergence: volume_by_price_divergence_map.into_values().collect(),
+        price_divergences_bp: volume_by_price_divergence_map.into_values().collect(),
     };
 
     Ok(AppCache {
