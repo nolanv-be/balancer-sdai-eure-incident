@@ -17,6 +17,10 @@ struct Args {
     #[arg(short, long, default_value = "30274134")]
     start_block_download: u64,
 
+    /// The starting block for downloading
+    #[arg(short, long, default_value = "10")]
+    max_concurrent_fetch: usize,
+
     /// Download swap data
     #[arg(long, default_value = "false")]
     download_swap: bool,
@@ -51,6 +55,7 @@ async fn main() -> Result<()> {
         download::start(
             &rpc_url,
             args.start_block_download,
+            args.max_concurrent_fetch,
             args.download_swap,
             args.download_sdai,
         )

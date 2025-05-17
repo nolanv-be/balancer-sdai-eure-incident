@@ -30,7 +30,6 @@ const SDAI_ARRAY_INDEX: usize = 0;
 const EURE_ADDRESS: Address = address!("cB444e90D8198415266c6a2724b7900fb12FC56E");
 const EURE_ARRAY_INDEX: usize = 1;
 const SWAPS_CSV_FILE: &str = "data/swaps.csv";
-const MAX_CONCURRENT_FETCH: usize = 20;
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
 pub struct SwapCsv {
@@ -62,6 +61,7 @@ pub struct Swap {
 pub async fn download_swap(
     provider: ProviderFiller,
     start_block_download: BlockNumber,
+    max_concurrent_fetch: usize,
 ) -> Result<()> {
     info!("Downloading swap data from rpc...");
     let mut csv_writer = csv::Writer::from_path(SWAPS_CSV_FILE)?;
@@ -83,6 +83,7 @@ pub async fn download_swap(
         fetch_swap_csv(
             &provider,
             &mut csv_writer,
+            max_concurrent_fetch,
             current_block,
             current_block.saturating_add(STEP.saturating_sub(1) as u64),
         )
@@ -96,6 +97,7 @@ pub async fn download_swap(
 pub async fn fetch_swap_csv(
     provider: &ProviderFiller,
     csv_writer: &mut csv::Writer<File>,
+    max_concurrent_fetch: usize,
     from_block: BlockNumber,
     to_block: BlockNumber,
 ) -> Result<()> {
@@ -110,7 +112,7 @@ pub async fn fetch_swap_csv(
 
     let mut tasks = JoinSet::new();
     for localized_trace in localized_traces {
-        while tasks.len() >= MAX_CONCURRENT_FETCH {
+        while tasks.len() >= max_concurrent_fetch {
             let Some(join_result) = tasks.join_next().await else {
                 continue;
             };

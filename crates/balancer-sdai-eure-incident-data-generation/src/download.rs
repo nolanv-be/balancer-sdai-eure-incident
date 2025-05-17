@@ -24,6 +24,7 @@ pub type ProviderFiller = FillProvider<
 pub async fn start(
     rpc_url: &str,
     start_block_download: BlockNumber,
+    max_concurrent_fetch: usize,
     is_download_swap: bool,
     is_download_sdai: bool,
 ) -> Result<()> {
@@ -31,7 +32,7 @@ pub async fn start(
     let provider = ProviderBuilder::new().connect_client(client);
 
     if is_download_swap {
-        swap::download_swap(provider.clone(), start_block_download).await?;
+        swap::download_swap(provider.clone(), start_block_download, max_concurrent_fetch).await?;
     }
 
     if is_download_sdai {

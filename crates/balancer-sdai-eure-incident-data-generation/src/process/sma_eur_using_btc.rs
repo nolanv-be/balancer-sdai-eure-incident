@@ -4,7 +4,7 @@ use alloy::sol_types::private::u256;
 use eyre::{Context, OptionExt, Result, ensure};
 use log::{debug, info};
 
-const SMA_LENGTH: usize = 20;
+const SMA_LENGTH: usize = 10;
 const SMA_CSV_FILE: &str = "data/sma-eur-usdt.csv";
 
 #[derive(serde::Deserialize, serde::Serialize, Debug, Clone)]
