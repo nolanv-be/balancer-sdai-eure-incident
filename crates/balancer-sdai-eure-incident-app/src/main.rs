@@ -1,26 +1,30 @@
 use askama::Template;
+use async_compression::tokio::bufread::GzipEncoder;
+use axum::body::Body;
 use axum::extract::State;
-use axum::response::Html;
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::response::{Html, IntoResponse, Response};
 use axum::{Router, routing};
 use balancer_sdai_eure_incident_data_generation::process::{
     CumulativeProfitLossChartData, PlotPriceDivergenceData, SwapWithDaiAndSpotCsv,
     u256_str_to_float_str_6_decimals,
 };
-use eyre::{OptionExt, Result};
-use log::info;
+use eyre::OptionExt;
+use log::{debug, info};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::str::FromStr;
+use tokio::io::{AsyncReadExt, BufReader};
 
 const APP_UNIX_SOCKET: &str = "balancer-sdai-eure-incident-app.socket";
 const TIMESTAMP_CACHE_EXPIRATION_UPDATED: u64 = 1744051806;
 
 #[derive(Clone)]
 struct AppCache {
-    index_html: Html<String>,
-    cumulative_profit_loss_html: Html<String>,
-    price_spot_vs_pool_html: Html<String>,
-    volume_by_price_divergence_html: Html<String>,
+    index: (Html<String>, Vec<u8>),
+    cumulative_profit_loss: (Html<String>, Vec<u8>),
+    price_spot_vs_pool: (Html<String>, Vec<u8>),
+    volume_by_price_divergence: (Html<String>, Vec<u8>),
 }
 
 #[derive(Debug, Template, Clone)]
@@ -62,7 +66,7 @@ struct VolumeByPriceDivergence {
 }
 
 #[tokio::main]
-async fn main() -> Result<()> {
+async fn main() -> eyre::Result<()> {
     env_logger::init();
     let runtime_dir = std::env::var("XDG_RUNTIME_DIR")?;
 
@@ -72,7 +76,7 @@ async fn main() -> Result<()> {
         app_socket_path.clone(),
     )?)?;
 
-    let app_state = load_app_cache()?;
+    let app_state = load_app_cache().await?;
 
     let app = Router::new()
         .nest_service(
@@ -81,20 +85,41 @@ async fn main() -> Result<()> {
         )
         .route(
             "/",
-            routing::get(|State(app): State<AppCache>| async { app.index_html }),
+            routing::get(|header_map: HeaderMap, State(app): State<AppCache>| async {
+                get_raw_or_gzip_response(header_map, app.index.0, app.index.1).await
+            }),
         )
         .route(
             "/cumulative-profit-loss",
-            routing::get(|State(app): State<AppCache>| async { app.cumulative_profit_loss_html }),
+            routing::get(|header_map: HeaderMap, State(app): State<AppCache>| async {
+                get_raw_or_gzip_response(
+                    header_map,
+                    app.cumulative_profit_loss.0,
+                    app.cumulative_profit_loss.1,
+                )
+                .await
+            }),
         )
         .route(
             "/price-spot-vs-pool",
-            routing::get(|State(app): State<AppCache>| async { app.price_spot_vs_pool_html }),
+            routing::get(|header_map: HeaderMap, State(app): State<AppCache>| async {
+                get_raw_or_gzip_response(
+                    header_map,
+                    app.price_spot_vs_pool.0,
+                    app.price_spot_vs_pool.1,
+                )
+                .await
+            }),
         )
         .route(
             "/volume-by-price-divergence",
-            routing::get(|State(app): State<AppCache>| async {
-                app.volume_by_price_divergence_html
+            routing::get(|header_map: HeaderMap, State(app): State<AppCache>| async {
+                get_raw_or_gzip_response(
+                    header_map,
+                    app.volume_by_price_divergence.0,
+                    app.volume_by_price_divergence.1,
+                )
+                .await
             }),
         )
         .with_state(app_state);
@@ -105,7 +130,7 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn load_app_cache() -> Result<AppCache> {
+async fn load_app_cache() -> eyre::Result<AppCache> {
     let plot_price_divergence_data_vec = PlotPriceDivergenceData::load()?;
     let swap_with_dai_and_spot_data_vec = SwapWithDaiAndSpotCsv::load()?;
 
@@ -174,12 +199,61 @@ fn load_app_cache() -> Result<AppCache> {
         price_divergences_bp: volume_by_price_divergence_map.into_values().collect(),
     };
 
+    let index_html = Html(index_template.render()?);
+    let cumulative_profit_loss_html = Html(cumulative_profit_loss_template.render()?);
+    let price_spot_vs_pool_html = Html(price_spot_vs_pool_template.render()?);
+    let volume_by_price_divergence_html = Html(volume_by_price_divergence_template.render()?);
     Ok(AppCache {
-        index_html: Html(index_template.render()?),
-        cumulative_profit_loss_html: Html(cumulative_profit_loss_template.render()?),
-        price_spot_vs_pool_html: Html(price_spot_vs_pool_template.render()?),
-        volume_by_price_divergence_html: Html(volume_by_price_divergence_template.render()?),
+        index: (index_html.clone(), html_to_gzip_response(index_html).await?),
+        cumulative_profit_loss: (
+            cumulative_profit_loss_html.clone(),
+            html_to_gzip_response(cumulative_profit_loss_html).await?,
+        ),
+        price_spot_vs_pool: (
+            price_spot_vs_pool_html.clone(),
+            html_to_gzip_response(price_spot_vs_pool_html).await?,
+        ),
+        volume_by_price_divergence: (
+            volume_by_price_divergence_html.clone(),
+            html_to_gzip_response(volume_by_price_divergence_html).await?,
+        ),
     })
+}
+
+async fn html_to_gzip_response(html: Html<String>) -> eyre::Result<Vec<u8>> {
+    let reader = BufReader::new(html.0.as_bytes());
+    let mut gzip = GzipEncoder::new(reader);
+    let mut compressed_body = Vec::new();
+    gzip.read_to_end(&mut compressed_body).await?;
+
+    Ok(compressed_body)
+}
+
+async fn get_raw_or_gzip_response(
+    header_map: HeaderMap,
+    html: Html<String>,
+    gzip: Vec<u8>,
+) -> Result<impl IntoResponse, (StatusCode, String)> {
+    if let Some(accept_encoding) = header_map.get(header::ACCEPT_ENCODING) {
+        if accept_encoding.to_str().unwrap().contains("gzip") {
+            debug!("Gzip response");
+
+            let mut headers = HeaderMap::new();
+            headers.insert(
+                header::CONTENT_TYPE,
+                "text/html; charset=utf-8".parse().unwrap(),
+            );
+            headers.insert(header::CONTENT_ENCODING, "gzip".parse().unwrap());
+
+            return Ok(Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/html; charset=utf-8")
+                .header(header::CONTENT_ENCODING, "gzip")
+                .body(gzip.into_response().into_body())
+                .unwrap());
+        }
+    }
+    Ok(html.into_response())
 }
 
 fn get_nonblocking_unix_listener(
