@@ -1,7 +1,6 @@
 use askama::Template;
 use axum::extract::State;
-use axum::http::StatusCode;
-use axum::response::{Html, IntoResponse};
+use axum::response::Html;
 use axum::{Router, routing};
 use balancer_sdai_eure_incident_data_generation::process::{
     CumulativeProfitLossChartData, PlotPriceDivergenceData, SwapWithDaiAndSpotCsv,
@@ -14,17 +13,13 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 const APP_UNIX_SOCKET: &str = "balancer-sdai-eure-incident-app.socket";
-const MAX_TIME_SINCE_LAST_UPDATE_CACHE: u64 = 10800;
-const PLOT_GRANULARITY: usize = 108;
 const TIMESTAMP_CACHE_EXPIRATION_UPDATED: u64 = 1744051806;
 
 #[derive(Clone)]
 struct AppCache {
     index_html: Html<String>,
     cumulative_profit_loss_html: Html<String>,
-    plot_price_divergence_bp_html: Html<String>,
     price_spot_vs_pool_html: Html<String>,
-    plot_price_divergence_bp_pre_post_fix_html: Html<String>,
     volume_by_price_divergence_html: Html<String>,
 }
 
@@ -41,12 +36,6 @@ struct CumulativeProfitLossTemplate {
 }
 
 #[derive(Debug, Template, Clone)]
-#[template(path = "components/plot-price-divergence.html")]
-struct PlotPriceDivergenceBPTemplate {
-    plot_price_divergence_bp_vec: Vec<Vec<String>>,
-}
-
-#[derive(Debug, Template, Clone)]
 #[template(path = "components/price-spot-vs-pool.html")]
 struct PriceSpotVsPoolTemplate {
     prices: Vec<PriceSpotVsPoolWithDate>,
@@ -57,13 +46,6 @@ struct PriceSpotVsPoolWithDate {
     date: String,
     price_spot: String,
     price_pool: String,
-}
-
-#[derive(Debug, Template, Clone)]
-#[template(path = "components/plot-price-divergence-pre-post-fix.html")]
-struct PlotPriceDivergenceBPPrePostFixTemplate {
-    plot_price_divergence_bp_pre_fix_vec: Vec<String>,
-    plot_price_divergence_bp_post_fix_vec: Vec<String>,
 }
 
 #[derive(Debug, Template, Clone)]
@@ -97,26 +79,23 @@ async fn main() -> Result<()> {
             "/assets",
             tower_http::services::ServeDir::new("crates/balancer-sdai-eure-incident-app/assets"),
         )
-        .route("/", routing::get(get_report))
         .route(
-            "/cumulative-profit-loss",
-            routing::get(get_chart_cumulative_profit_loss),
+            "/",
+            routing::get(|State(app): State<AppCache>| async { app.index_html }),
         )
         .route(
-            "/plot-price-divergence",
-            routing::get(get_chart_plot_price_divergence),
+            "/cumulative-profit-loss",
+            routing::get(|State(app): State<AppCache>| async { app.cumulative_profit_loss_html }),
         )
         .route(
             "/price-spot-vs-pool",
-            routing::get(get_chart_price_spot_vs_pool),
-        )
-        .route(
-            "/plot-price-divergence-pre-post",
-            routing::get(get_chart_plot_price_pre_post_fix_divergence),
+            routing::get(|State(app): State<AppCache>| async { app.price_spot_vs_pool_html }),
         )
         .route(
             "/volume-by-price-divergence",
-            routing::get(get_chart_volume_by_price_divergence),
+            routing::get(|State(app): State<AppCache>| async {
+                app.volume_by_price_divergence_html
+            }),
         )
         .with_state(app_state);
 
@@ -130,36 +109,6 @@ fn load_app_cache() -> Result<AppCache> {
     let plot_price_divergence_data_vec = PlotPriceDivergenceData::load()?;
     let swap_with_dai_and_spot_data_vec = SwapWithDaiAndSpotCsv::load()?;
 
-    let plot_price_divergence_bp_vec: Vec<Vec<String>> = (0..MAX_TIME_SINCE_LAST_UPDATE_CACHE)
-        .step_by(PLOT_GRANULARITY)
-        .map(|i| {
-            plot_price_divergence_data_vec
-                .iter()
-                .filter(|c| {
-                    c.time_since_last_update_cache >= i
-                        && c.time_since_last_update_cache < i + PLOT_GRANULARITY as u64
-                })
-                .map(|c| c.divergence_bp.to_string())
-                .collect()
-        })
-        .collect();
-
-    let (plot_price_divergence_bp_pre_fix_vec, plot_price_divergence_bp_post_fix_vec): (
-        Vec<String>,
-        Vec<String>,
-    ) = (
-        plot_price_divergence_data_vec
-            .iter()
-            .filter(|c| c.timestamp < TIMESTAMP_CACHE_EXPIRATION_UPDATED)
-            .map(|c| c.divergence_bp.to_string())
-            .collect(),
-        plot_price_divergence_data_vec
-            .iter()
-            .filter(|c| c.timestamp >= TIMESTAMP_CACHE_EXPIRATION_UPDATED)
-            .map(|c| c.divergence_bp.to_string())
-            .collect(),
-    );
-
     let index_template = IndexTemplate {
         date_cache_expiration_updated: chrono::DateTime::<chrono::Utc>::from_timestamp(
             TIMESTAMP_CACHE_EXPIRATION_UPDATED as i64,
@@ -172,9 +121,7 @@ fn load_app_cache() -> Result<AppCache> {
     let cumulative_profit_loss_template = CumulativeProfitLossTemplate {
         cumulative_profit_loss_data_vec: CumulativeProfitLossChartData::load()?,
     };
-    let plot_price_divergence_bp_template = PlotPriceDivergenceBPTemplate {
-        plot_price_divergence_bp_vec,
-    };
+
     let price_spot_vs_pool_template = PriceSpotVsPoolTemplate {
         prices: swap_with_dai_and_spot_data_vec
             .iter()
@@ -187,10 +134,6 @@ fn load_app_cache() -> Result<AppCache> {
                 price_pool: u256_str_to_float_str_6_decimals(&s.eure_price_new),
             })
             .collect(),
-    };
-    let plot_price_divergence_bp_pre_post_fix_template = PlotPriceDivergenceBPPrePostFixTemplate {
-        plot_price_divergence_bp_pre_fix_vec,
-        plot_price_divergence_bp_post_fix_vec,
     };
 
     let mut volume_by_price_divergence_map: HashMap<String, VolumeByPriceDivergence> =
@@ -234,49 +177,9 @@ fn load_app_cache() -> Result<AppCache> {
     Ok(AppCache {
         index_html: Html(index_template.render()?),
         cumulative_profit_loss_html: Html(cumulative_profit_loss_template.render()?),
-        plot_price_divergence_bp_html: Html(plot_price_divergence_bp_template.render()?),
         price_spot_vs_pool_html: Html(price_spot_vs_pool_template.render()?),
-        plot_price_divergence_bp_pre_post_fix_html: Html(
-            plot_price_divergence_bp_pre_post_fix_template.render()?,
-        ),
         volume_by_price_divergence_html: Html(volume_by_price_divergence_template.render()?),
     })
-}
-
-async fn get_report(
-    State(app): State<AppCache>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    Ok(app.index_html)
-}
-
-async fn get_chart_cumulative_profit_loss(
-    State(app): State<AppCache>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    Ok(app.cumulative_profit_loss_html)
-}
-
-async fn get_chart_plot_price_divergence(
-    State(app): State<AppCache>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    Ok(app.plot_price_divergence_bp_html)
-}
-
-async fn get_chart_price_spot_vs_pool(
-    State(app): State<AppCache>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    Ok(app.price_spot_vs_pool_html)
-}
-
-async fn get_chart_plot_price_pre_post_fix_divergence(
-    State(app): State<AppCache>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    Ok(app.plot_price_divergence_bp_pre_post_fix_html)
-}
-
-async fn get_chart_volume_by_price_divergence(
-    State(app): State<AppCache>,
-) -> Result<impl IntoResponse, (StatusCode, String)> {
-    Ok(app.volume_by_price_divergence_html)
 }
 
 fn get_nonblocking_unix_listener(
