@@ -56,6 +56,7 @@
     can move by several percent in a matter of minutes. But is that actually an issue? Surely the price wouldn't shift
     that much in just 5 seconds?
 </p>
+
 <h2 class="mt-16 text-pretty text-3xl font-semibold tracking-tight text-gray-900">Price divergence spot vs pool</h2>
 <p class="mt-6">
     To understand the problem clearly, it's important to grasp two main points:
@@ -69,7 +70,7 @@
     Forex
     market opening hours</a>. This means the price
     discrepancy is always at least 0.1%. Furthermore, on weekends, the price isn't updated at all. Yet, even with the
-    Forex market closed on weekends, EUR/USD still has a price, whether through certain <a
+    Forex market closed on weekends, EUR/USD still has a price, whether through <a
         class="font-semibold text-sky-600 hover:text-sky-500"
         target="_blank"
         href="https://www.ig.com/en/indices/markets-indices/weekend-eurusd">traditional financial
@@ -109,10 +110,9 @@
     after April 7, 2025, once the cache was disabled, you'll also be able to see the impact of ChainLink alone on price
     divergence.
 </p>
-
 <figure class="mt-16" hx-get="/volume-by-price-divergence" hx-trigger="load delay:500ms" hx-swap="outerHTML">
     <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
-         src="assets/chart-price-spot-vs-pool.png" alt="">
+         src="assets/chart-volume-by-price-divergence.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
         <svg class="mt-0.5 size-5 flex-none text-gray-300" viewBox="0 0 20 20" fill="currentColor"
              aria-hidden="true" data-slot="icon">
@@ -132,10 +132,11 @@
 </p>
 
 <h2 class="mt-16 text-pretty text-3xl font-semibold tracking-tight text-gray-900">Estimated total loss</h2>
-
-<div class="mt-32"/>
-<!---
-<figure class="mt-16" hx-get="/cumulative-profit-loss" hx-trigger="load" hx-swap="outerHTML">
+<p class="mt-6">
+    Now that we've figured out why the pool lost money, it's time to calculate the total loss caused by this
+    misconfiguration.
+</p>
+<figure class="mt-16" hx-get="/cumulative-profit-loss" hx-trigger="load delay:900ms" hx-swap="outerHTML">
     <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
          src="assets/chart-cumulative-profit-loss.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
@@ -148,10 +149,54 @@
         Loading...
     </figcaption>
 </figure>
+<p class="mt-4">
+    The total loss amounts to $700,000. This figure, however, does not account for transaction fees and slippage
+    collected by the pool. Once these are factored in, the net loss comes down to $370,000. It's also worth noting the
+    cumulative P&L after deactivating the cache; the pool then incurs fewer losses from price divergence, though
+    significant losses are still noticeable on weekends.
+</p>
 
-<figure class="mt-16" hx-get="/plot-price-divergence" hx-trigger="load delay:500ms" hx-swap="outerHTML">
-    <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
-         src="assets/chart-plot-price-divergence.png" alt="">
+<h2 class="mt-16 text-pretty text-3xl font-semibold tracking-tight text-gray-900">Recommendations</h2>
+<p class="mt-6">
+    <strong class="font-semibold text-gray-900">Deprecate EURe/sDAI pool.</strong> We've observed that even with the
+    cache disabled, the pool keeps bleeding
+    money over weekends because ChainLink's price feeds aren't updating. On top of that, GnosisChain's 5-second
+    block time allows for quick and low-cost price arbitrage. Therefore, I recommend publicly addressing this issue and
+    urging users to migrate their liquidity to an oracle-less solution.
+</p>
+<p class="mt-8">
+    <strong class="font-semibold text-gray-900">Reduce the amplification factor.</strong> If the pool is not to be
+    deprecated, I had recommended in <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://drive.proton.me/urls/4PRXH4QJ30#UC7fZBUyGYPD">the
+    note</a> I shared with <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://kpk.io">kpk</a> on April 9, 2025, reducing the amplification
+    factor by a
+    factor of 2 to 4 (from 1,000 down to 250-500) to mitigate the impact of arbitrage. The amplification factor has
+    since been lowered to 500, and fees have been increased from 0.05% to 0.25%.
+</p>
+<p class="mt-8">
+    <strong class="font-semibold text-gray-900">Compensate for the loss.</strong> GnosisPay, and by extension
+    GnosisChain, has a community that, while admittedly modest in size, is notably loyal, as evidenced by its retention
+    rates. This loss, although relatively small, has the potential to severely erode the trust this community places in
+    Gnosis's products. I believe it would be in Gnosis's best interest to compensate the liquidity providers for all or
+    part of this loss. Even though the pool was managed by Balancer, it was crucial to the smooth operation of
+    GnosisPay. I am available to assist should you wish to implement a reimbursement strategy. I also want to disclose
+    that I am one of the liquidity providers.
+</p>
+
+<h2 class="mt-16 text-pretty text-3xl font-semibold tracking-tight text-gray-900 border-t border-gray-900/10 pt-10">
+    Appendix</h2>
+<p class="mt-6">
+    To calculate the loss resulting from the price divergence between the pool and the spot price, I needed to obtain
+    data for all swaps involving the pool.
+</p>
+<figure class="mt-6 ml-auto mr-auto w-fit">
+    <img class="rounded-xl bg-gray-50 object-cover max-h-48 w-auto"
+         src="assets/code-swap-event.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
         <svg class="mt-0.5 size-5 flex-none text-gray-300" viewBox="0 0 20 20" fill="currentColor"
              aria-hidden="true" data-slot="icon">
@@ -159,13 +204,28 @@
                   d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
                   clip-rule="evenodd"/>
         </svg>
-        Loading...
+        Balancer vault swap event
     </figcaption>
 </figure>
+<p class="mt-6">
+    I was unable to use the data provided by <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://dune.com/balancer/pool-analysis?4.+q.Blockchain_t9819b=gnosis&1.+Pool+ID_t1b222=0xdd439304a77f54b1f7854751ac1169b279591ef7000000000000000000000064&4.+Blockchain_t9819b=gnosis">Dune</a>,
+    as it did not offer a complete
+    picture of all transactions. Indeed, their data was limited to Swap events—specifically, EURe<=>sDAI swaps—thereby
+    omitting liquidity provisions and withdrawals.
+</p>
 
-<figure class="mt-16" hx-get="/price-spot-vs-pool" hx-trigger="load delay:1000ms" hx-swap="outerHTML">
-    <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
-         src="assets/chart-price-spot-vs-pool.png" alt="">
+<p class="mt-8">
+    If liquidity is added or removed using both assets in proportion to their existing ratio in the pool, no swap
+    occurs, and the operation is considered neutral.
+    However, it's also possible to enter or exit the pool with a single asset, or even with both assets but in
+    proportions that differ from the pool's ratio. Such an operation is effectively a swap.
+</p>
+<figure class="mt-6 ml-auto mr-auto w-fit">
+    <img class="rounded-xl bg-gray-50 object-cover max-h-64 w-auto"
+         src="assets/swap-sdai-bpt-eure.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
         <svg class="mt-0.5 size-5 flex-none text-gray-300" viewBox="0 0 20 20" fill="currentColor"
              aria-hidden="true" data-slot="icon">
@@ -173,13 +233,29 @@
                   d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
                   clip-rule="evenodd"/>
         </svg>
-        Loading...
+        Swap sDAI => BPT => EURe
     </figcaption>
 </figure>
-
-<figure class="mt-16" hx-get="/plot-price-divergence-pre-post" hx-trigger="load delay:1500ms" hx-swap="outerHTML">
-    <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
-         src="assets/chart-price-spot-vs-pool.png" alt="">
+<p class="mt-6">
+    For instance, consider <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://gnosisscan.io/tx/0x40da3abe477c65d73f375bce05fd9c1680d04148d92ede85afd4594536b20e96">this
+    transaction</a>: the taker added sDAI to the
+    pool and withdrew EURe. In doing so, they
+    performed an sDAI to EURe swap without an sDAI => EURe swap event being emitted.
+</p>
+<p class="mt-8">
+    To calculate swaps due to liquidity deposits and withdrawals, I had to determine the ratio between the Balancer Pool
+    Token (BPT) and the two assets involved (sDAI and EURe).
+    This ratio can typically be obtained via getters functions. However, a problem emerged: a single transaction can
+    perform multiple operations with the pool. This made it
+    impossible to simply call the functions before the transaction, as the values could change significantly within that
+    same transaction.
+</p>
+<figure class="mt-6">
+    <img class="rounded-xl bg-gray-50 object-cover"
+         src="assets/code-sdai-to-bpt.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
         <svg class="mt-0.5 size-5 flex-none text-gray-300" viewBox="0 0 20 20" fill="currentColor"
              aria-hidden="true" data-slot="icon">
@@ -187,22 +263,42 @@
                   d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
                   clip-rule="evenodd"/>
         </svg>
-        Loading...
+        Pseudocode to obtain swap value(sDAI => EURe) from onJoinPool() with sDAI only
     </figcaption>
 </figure>
+<p class="mt-6">
+    To overcome this limitation, I first needed to retrieve the <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://github.com/balancer/balancer-v2-monorepo/blob/36d282374b457dddea828be7884ee0d185db06ba/pkg/pool-utils/contracts/BaseGeneralPool.sol#L32">onSwap()</a>,
+    <a
+            class="font-semibold text-sky-600 hover:text-sky-500"
+            target="_blank"
+            href="https://github.com/balancer/balancer-v2-monorepo/blob/36d282374b457dddea828be7884ee0d185db06ba/pkg/pool-utils/contracts/BasePool.sol#L289">onJoinPool()</a>,
+    and <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://github.com/balancer/balancer-v2-monorepo/blob/36d282374b457dddea828be7884ee0d185db06ba/pkg/pool-utils/contracts/BasePool.sol#L351">onExitPool()</a>
+    calls
+    using <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://www.alchemy.com/docs/reference/what-is-trace_filter">trace_filter</a>.
+    Then, it was necessary to use <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://openethereum.github.io/JSONRPC-trace-module">trace_replayTransaction</a> to get the
+    <a
+            class="font-semibold text-sky-600 hover:text-sky-500"
+            target="_blank"
+            href="https://www.evm.codes/?fork=cancun#54">SLOAD</a> and <a
+        class="font-semibold text-sky-600 hover:text-sky-500"
+        target="_blank"
+        href="https://www.evm.codes/?fork=cancun#55">SSTORE</a>
+    operations for that subtrace.
+    This allowed me to manually calculate the ratio and, from there, determine the exact proportions of sDAI and
+    EURe for each BPT sent or received.
+</p>
 
-<figure class="mt-16" hx-get="/volume-by-price-divergence" hx-trigger="load delay:2000ms" hx-swap="outerHTML">
-    <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
-         src="assets/chart-price-spot-vs-pool.png" alt="">
-    <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
-        <svg class="mt-0.5 size-5 flex-none text-gray-300" viewBox="0 0 20 20" fill="currentColor"
-             aria-hidden="true" data-slot="icon">
-            <path fill-rule="evenodd"
-                  d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z"
-                  clip-rule="evenodd"/>
-        </svg>
-        Loading...
-    </figcaption>
-</figure>
--->
+<div class="mt-16"/>
 {%- endblock -%}

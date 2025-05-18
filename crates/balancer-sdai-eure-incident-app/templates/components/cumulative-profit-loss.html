@@ -21,7 +21,12 @@
           saveAsImage: {}
         }
       },
-      tooltip: {},
+      tooltip: {
+        trigger: 'axis',
+        position: function (pt) {
+          return [pt[0], '10%'];
+        }
+      },
       legend: {},
       xAxis: {
         type: 'time',
