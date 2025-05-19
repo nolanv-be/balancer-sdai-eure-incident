@@ -1,8 +1,7 @@
 use askama::Template;
 use async_compression::tokio::bufread::GzipEncoder;
-use axum::body::Body;
 use axum::extract::State;
-use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{Html, IntoResponse, Response};
 use axum::{Router, routing};
 use balancer_sdai_eure_incident_data_generation::process::{
@@ -68,9 +67,8 @@ struct VolumeByPriceDivergence {
 #[tokio::main]
 async fn main() -> eyre::Result<()> {
     env_logger::init();
-    let runtime_dir = std::env::var("XDG_RUNTIME_DIR")?;
 
-    let app_socket_path = PathBuf::from(format!("{runtime_dir}/{APP_UNIX_SOCKET}"));
+    let app_socket_path = PathBuf::from(APP_UNIX_SOCKET);
 
     let listener = tokio::net::UnixListener::from_std(get_nonblocking_unix_listener(
         app_socket_path.clone(),
@@ -79,10 +77,7 @@ async fn main() -> eyre::Result<()> {
     let app_state = load_app_cache().await?;
 
     let app = Router::new()
-        .nest_service(
-            "/assets",
-            tower_http::services::ServeDir::new("crates/balancer-sdai-eure-incident-app/assets"),
-        )
+        .nest_service("/assets", tower_http::services::ServeDir::new("assets"))
         .route(
             "/",
             routing::get(|header_map: HeaderMap, State(app): State<AppCache>| async {

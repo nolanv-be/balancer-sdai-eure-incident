@@ -12,6 +12,11 @@
         source: chartCumulativeLossesData,
         dimensions: ['timestamp', 'Cumulative P&L', 'Cumulative P&L(with slippage, fee)'],
       },
+      grid: {
+        containLabel: true,
+        left: 16,
+        right: 16,
+      },
       toolbox: {
         feature: {
           dataZoom: {
@@ -46,6 +51,38 @@
           alignTicks: true,
           axisLabel: {
             formatter: '{value} $'
+          }
+        }
+      ],
+      media: [
+        {
+          grid: {
+            top: 64,
+          },
+          toolbox: {
+            top: 4,
+          },
+          query: {
+            maxHeight: 300
+          },
+          option: {
+            legend: {
+              top: 32
+            },
+            yAxis: [
+              {
+                axisLabel: {
+                  show: false
+                },
+                splitNumber: 2
+              },
+              {
+                axisLabel: {
+                  show: false
+                },
+                splitNumber: 2
+              }
+            ]
           }
         }
       ],
