@@ -90,7 +90,7 @@
     divergences between the pool's price and the actual EUR/USD price. (The cache duration has now been set to 1
     second, effectively meaning there's no cache.)
 </p>
-<figure class="mt-16" hx-get="/price-spot-vs-pool" hx-trigger="load delay:100ms" hx-swap="outerHTML">
+<figure class="mt-16" hx-get="price-spot-vs-pool" hx-trigger="load delay:100ms" hx-swap="outerHTML">
     <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
          src="assets/chart-price-spot-vs-pool.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
@@ -110,7 +110,7 @@
     after April 7, 2025, once the cache was disabled, you'll also be able to see the impact of ChainLink alone on price
     divergence.
 </p>
-<figure class="mt-16" hx-get="/volume-by-price-divergence" hx-trigger="load delay:500ms" hx-swap="outerHTML">
+<figure class="mt-16" hx-get="volume-by-price-divergence" hx-trigger="load delay:500ms" hx-swap="outerHTML">
     <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
          src="assets/chart-volume-by-price-divergence.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">
@@ -136,7 +136,7 @@
     Now that we've figured out why the pool lost money, it's time to calculate the total loss caused by this
     misconfiguration.
 </p>
-<figure class="mt-16" hx-get="/cumulative-profit-loss" hx-trigger="load delay:900ms" hx-swap="outerHTML">
+<figure class="mt-16" hx-get="cumulative-profit-loss" hx-trigger="load delay:900ms" hx-swap="outerHTML">
     <img class="animate-pulse aspect-video rounded-xl bg-gray-50 object-cover w-full"
          src="assets/chart-cumulative-profit-loss.png" alt="">
     <figcaption class="mt-4 flex gap-x-2 text-sm/6 text-gray-500">

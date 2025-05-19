@@ -47,5 +47,5 @@ find data/binance-spot -type f -name '*.csv' -exec sh -c '
 1. Compile => `cargo build --bin balancer-sdai-eure-incident-app --release`
 2. Start the websever => `RUST_LOG=info ./target/release/balancer-sdai-eure-incident-app`
 3. Map Unix Domain Socket to a TCP port =>
-   `socat TCP-LISTEN:8080,fork UNIX:"$XDG_RUNTIME_DIR"/balancer-sdai-eure-incident-app.socket`
+   `socat TCP-LISTEN:8080,fork UNIX:balancer-sdai-eure-incident-app.socket`
 4. Access the incident report => `http://localhost:8080`

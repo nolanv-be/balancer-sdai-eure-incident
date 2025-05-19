@@ -11,6 +11,8 @@ use balancer_sdai_eure_incident_data_generation::process::{
 use eyre::OptionExt;
 use log::{debug, info};
 use std::collections::HashMap;
+use std::fs::Permissions;
+use std::os::unix::prelude::PermissionsExt;
 use std::path::PathBuf;
 use std::str::FromStr;
 use tokio::io::{AsyncReadExt, BufReader};
@@ -254,7 +256,7 @@ async fn get_raw_or_gzip_response(
 fn get_nonblocking_unix_listener(
     socket_path: PathBuf,
 ) -> std::io::Result<std::os::unix::net::UnixListener> {
-    let is_socket_exist = std::fs::exists(socket_path.clone())?;
+    let is_socket_exist = std::fs::exists(&socket_path)?;
     match is_socket_exist {
         true => {
             std::fs::remove_file(&socket_path)?;
@@ -267,8 +269,10 @@ fn get_nonblocking_unix_listener(
         }
     }
 
-    let listener = std::os::unix::net::UnixListener::bind(socket_path)?;
+    let listener = std::os::unix::net::UnixListener::bind(&socket_path)?;
     listener.set_nonblocking(true)?;
+
+    std::fs::set_permissions(&socket_path, Permissions::from_mode(0o770))?;
 
     Ok(listener)
 }
