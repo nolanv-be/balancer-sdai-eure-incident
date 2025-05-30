@@ -8,7 +8,7 @@ You can view the report here => [REDACTED]
 
 ### Download snapshot
 
-You can download the data here => https://drive.proton.me/urls/MABRAGQ8M8#GSXC5ZtmGfCl
+You can download the data here => https://drive.proton.me/urls/0R9J24192G#g5LAboarqS0D
 
 ### Or fetch on-chain data
 
